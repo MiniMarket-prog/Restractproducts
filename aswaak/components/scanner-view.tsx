@@ -13,6 +13,10 @@ import { fetchProductByBarcode, fetchCategories, saveProduct } from "@/services/
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertCircle, Info } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { useRouter } from "next/navigation"
 
 export function ScannerView() {
   const [currentProduct, setCurrentProduct] = useState<Product | null>(null)
@@ -24,6 +28,8 @@ export function ScannerView() {
   const [currentBarcode, setCurrentBarcode] = useState<string>("")
   const [productNotAvailable, setProductNotAvailable] = useState(false)
   const { toast } = useToast()
+  const router = useRouter()
+  const [isDialogOpen, setIsDialogOpen] = useState(false)
 
   useEffect(() => {
     // Fetch categories when component mounts
@@ -192,6 +198,64 @@ export function ScannerView() {
     }
   }
 
+  const handleEditProduct = () => {
+    setShowForm(true)
+  }
+
+  const handleCancelEdit = () => {
+    setShowForm(false)
+    setWebProductInfo(null)
+  }
+
+  const handleIncrementStock = () => {
+    setIsDialogOpen(true)
+  }
+
+  const handleCloseDialog = () => {
+    setIsDialogOpen(false)
+  }
+
+  const handleStockUpdate = async (newStock: number) => {
+    if (!currentProduct?.id) {
+      toast({
+        title: "Error",
+        description: "Product ID is missing.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    try {
+      setIsLoading(true)
+      // Optimistically update the UI
+      setCurrentProduct((prevProduct) => {
+        if (prevProduct) {
+          return { ...prevProduct, stock: newStock }
+        }
+        return prevProduct
+      })
+
+      // Call the updateProductStock function
+      // await updateProductStock(currentProduct.id, newStock)
+
+      toast({
+        title: "Success",
+        description: "Stock updated successfully.",
+      })
+      router.refresh() // Refresh the route to update server-side data
+    } catch (error) {
+      console.error("Error updating stock:", error)
+      toast({
+        title: "Error",
+        description: `Failed to update stock: ${error instanceof Error ? error.message : String(error)}`,
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
+      setIsDialogOpen(false)
+    }
+  }
+
   return (
     <div className="w-full max-w-md mx-auto flex flex-col min-h-screen">
       <AppHeader />
@@ -229,6 +293,7 @@ export function ScannerView() {
               categories={categories}
               onCancel={handleFormCancel}
               onSuccess={handleFormSuccess}
+              isLoading={isLoading}
             />
           )}
 
@@ -261,6 +326,7 @@ export function ScannerView() {
               categories={categories}
               onCancel={handleFormCancel}
               onSuccess={handleFormSuccess}
+              isLoading={isLoading}
             />
           )}
 
@@ -276,6 +342,61 @@ export function ScannerView() {
           />
         </TabsContent>
       </Tabs>
+
+      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Update Stock</DialogTitle>
+          </DialogHeader>
+          <StockUpdateForm
+            onUpdate={handleStockUpdate}
+            onClose={handleCloseDialog}
+            currentStock={currentProduct?.stock || 0}
+            isLoading={isLoading}
+          />
+          <DialogFooter></DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+interface StockUpdateFormProps {
+  onUpdate: (newStock: number) => void
+  onClose: () => void
+  currentStock: number
+  isLoading: boolean
+}
+
+function StockUpdateForm({ onUpdate, onClose, currentStock, isLoading }: StockUpdateFormProps) {
+  const [newStock, setNewStock] = useState(currentStock)
+
+  const handleUpdate = () => {
+    onUpdate(newStock)
+  }
+
+  return (
+    <div className="grid gap-4 py-4">
+      <div className="grid grid-cols-4 items-center gap-4">
+        <label htmlFor="stock" className="text-right">
+          New Stock
+        </label>
+        <Input
+          type="number"
+          id="stock"
+          value={String(newStock)}
+          onChange={(e) => setNewStock(Number(e.target.value))}
+          className="col-span-3"
+        />
+      </div>
+      <div className="flex justify-end">
+        <Button type="button" variant="secondary" onClick={onClose} disabled={isLoading}>
+          Cancel
+        </Button>
+        <Button type="button" onClick={handleUpdate} disabled={isLoading}>
+          Update Stock
+        </Button>
+      </div>
     </div>
   )
 }
