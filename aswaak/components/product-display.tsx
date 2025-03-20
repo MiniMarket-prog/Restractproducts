@@ -15,24 +15,33 @@ interface ProductDisplayProps {
   onEdit: () => void
 }
 
-// Changed back to named export
 export function ProductDisplay({ product, onEdit }: ProductDisplayProps) {
   const [showStockControl, setShowStockControl] = useState(false)
 
-  const formatDate = (dateString?: string) => {
+  // Updated formatDate to handle null values
+  const formatDate = (dateString?: string | null): string => {
     if (!dateString) return "N/A"
     return new Date(dateString).toLocaleDateString()
   }
 
-  // Always use a string for the image source
-  const imageSrc =
-    product.image && typeof product.image === "string" ? product.image : "/placeholder.svg?height=200&width=200"
+  // Create a default image path
+  const defaultImage = "/placeholder.svg?height=200&width=200"
+
+  // Type guard function to ensure we have a valid string
+  const getValidImageSrc = (): string => {
+    // If product.image exists and is a string, use it
+    if (product.image && typeof product.image === "string") {
+      return product.image
+    }
+    // Otherwise use the default image
+    return defaultImage
+  }
 
   return (
     <Card className="mb-4 overflow-hidden">
       <div className="bg-gradient-to-r from-primary/10 to-primary/5 p-6 flex justify-center">
         <Image
-          src={imageSrc || "/placeholder.svg?height=200&width=200"}
+          src={getValidImageSrc() || "/placeholder.svg"}
           alt={product.name}
           width={200}
           height={200}

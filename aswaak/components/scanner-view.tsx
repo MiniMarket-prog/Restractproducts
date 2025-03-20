@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { BarcodeScanner } from "@/components/barcode-scanner"
 import { ManualEntry } from "@/components/manual-entry"
-import { ProductDisplay } from "@/components/product-display" // Changed back to named import
+import { ProductDisplay } from "@/components/product-display" // Make sure this is a named import
 import { ProductHistory } from "@/components/product-history"
 import { ProductForm } from "@/components/product-form"
 import type { Product, Category } from "@/types/product"
