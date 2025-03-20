@@ -119,19 +119,27 @@ export async function saveProduct(product: Product): Promise<Product> {
     // Check if product already exists
     const existingProduct = await fetchProductByBarcode(product.barcode)
 
+    // Prepare the product data for insertion/update
+    // Make sure to remove any properties that aren't in the database schema
+    const productData = {
+      name: product.name,
+      price: product.price,
+      barcode: product.barcode,
+      stock: product.stock || 0,
+      min_stock: product.min_stock || 0,
+      image: product.image,
+      category_id: product.category_id,
+      purchase_price: product.purchase_price || null,
+      expiry_date: product.expiry_date || null,
+      expiry_notification_days: product.expiry_notification_days || 30,
+    }
+
     if (existingProduct) {
       // Update existing product
+      console.log("Updating existing product:", existingProduct.id)
       const { data, error } = await supabase
         .from("products")
-        .update({
-          name: product.name,
-          price: product.price,
-          image: product.image,
-          category_id: product.category_id,
-          purchase_price: product.purchase_price,
-          expiry_date: product.expiry_date,
-          expiry_notification_days: product.expiry_notification_days,
-        })
+        .update(productData)
         .eq("id", existingProduct.id)
         .select()
         .single()
@@ -141,17 +149,49 @@ export async function saveProduct(product: Product): Promise<Product> {
         throw new Error(error.message)
       }
 
-      return data as Product
+      console.log("Product updated successfully:", data)
+      return {
+        ...data,
+        category: existingProduct.category,
+        isLowStock: data.stock <= data.min_stock,
+        isExpiringSoon: data.expiry_date
+          ? isExpiringSoon(data.expiry_date, data.expiry_notification_days || 30)
+          : false,
+      } as Product
     } else {
       // Insert new product
-      const { data, error } = await supabase.from("products").insert(product).select().single()
+      console.log("Inserting new product")
+      const { data, error } = await supabase.from("products").insert(productData).select().single()
 
       if (error) {
         console.error("Error inserting product:", error)
         throw new Error(error.message)
       }
 
-      return data as Product
+      console.log("Product inserted successfully:", data)
+
+      // Fetch the category to include in the returned product
+      let category: Category | null = null
+      if (product.category_id) {
+        const { data: categoryData } = await supabase
+          .from("categories")
+          .select("*")
+          .eq("id", product.category_id)
+          .single()
+
+        if (categoryData) {
+          category = categoryData as Category
+        }
+      }
+
+      return {
+        ...data,
+        category: category,
+        isLowStock: data.stock <= data.min_stock,
+        isExpiringSoon: data.expiry_date
+          ? isExpiringSoon(data.expiry_date, data.expiry_notification_days || 30)
+          : false,
+      } as Product
     }
   } catch (err) {
     console.error("Error in saveProduct:", err)
@@ -182,6 +222,42 @@ export async function updateProductStock(id: string, newStock: number): Promise<
   }
 }
 
+// Function to fetch product info from aswakassalam.com
+export async function fetchProductInfoFromWeb(barcode: string): Promise<ProductFetchResult | null> {
+  try {
+    // Call our API route to fetch product info
+    const response = await fetch(`/api/fetch-product?barcode=${barcode}`)
+
+    if (!response.ok) {
+      const errorData = await response.json()
+      console.error("Error from API:", errorData)
+
+      // If it's a 404 (product not available), throw a specific error
+      if (response.status === 404) {
+        throw new Error("404: Product not available in Aswak Assalam")
+      }
+
+      return null
+    }
+
+    const data = await response.json()
+
+    // Format the price to ensure it's displayed correctly
+    const formattedPrice = data.price.replace(",", ".") // Replace comma with dot for decimal
+
+    return {
+      name: data.name,
+      price: formattedPrice,
+      image: data.image,
+      description: `Category: ${data.category || "Unknown"}, In Stock: ${data.isInStock ? "Yes" : "No"}`,
+      category: data.category,
+    }
+  } catch (error) {
+    console.error("Error fetching product info from web:", error)
+    throw error
+  }
+}
+
 // Helper function to check if a product is expiring soon
 function isExpiringSoon(expiryDateStr: string, notificationDays: number): boolean {
   const expiryDate = new Date(expiryDateStr)
@@ -190,24 +266,5 @@ function isExpiringSoon(expiryDateStr: string, notificationDays: number): boolea
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
 
   return diffDays <= notificationDays && diffDays >= 0
-}
-
-// Function to fetch product info from aswakassalam.com
-export async function fetchProductInfoFromWeb(barcode: string): Promise<ProductFetchResult | null> {
-  try {
-    // In a real implementation, you would use a server-side API to scrape the website
-    // For demo purposes, we'll simulate a successful fetch with mock data
-
-    // This would be replaced with actual web scraping logic
-    return {
-      name: `Product ${barcode.substring(0, 4)}`,
-      price: (Math.random() * 100).toFixed(2),
-      image: "/placeholder.svg?height=200&width=200",
-      description: "Product description fetched from website",
-    }
-  } catch (error) {
-    console.error("Error fetching product info from web:", error)
-    return null
-  }
 }
 

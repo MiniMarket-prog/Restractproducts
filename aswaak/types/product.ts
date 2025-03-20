@@ -8,14 +8,14 @@ export interface Product {
   id?: string
   name: string
   price: string
-  barcode: string | null // Changed from string to string | null
+  barcode: string | null
   stock: number
   min_stock: number
   image?: string | null
   category_id?: string | null
   created_at?: string
   purchase_price?: number | null
-  expiry_date?: string | null // Ensure this is defined as potentially null
+  expiry_date?: string | null
   expiry_notification_days?: number | null
 
   // UI-only properties (not stored in DB)
@@ -30,5 +30,6 @@ export interface ProductFetchResult {
   price: string
   image?: string
   description?: string
+  category?: string
 }
 

@@ -2,13 +2,11 @@
 
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Edit, AlertTriangle, Package } from "lucide-react"
+import { Edit } from "lucide-react"
 import Image from "next/image"
 import type { Product } from "@/types/product"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { StockControl } from "@/components/stock-control"
-import { useState } from "react"
 
 interface ProductDisplayProps {
   product: Product
@@ -16,8 +14,6 @@ interface ProductDisplayProps {
 }
 
 export function ProductDisplay({ product, onEdit }: ProductDisplayProps) {
-  const [showStockControl, setShowStockControl] = useState(false)
-
   // Updated formatDate to handle null values
   const formatDate = (dateString?: string | null): string => {
     if (!dateString) return "N/A"
@@ -29,9 +25,16 @@ export function ProductDisplay({ product, onEdit }: ProductDisplayProps) {
 
   // Type guard function to ensure we have a valid string
   const getValidImageSrc = (): string => {
-    // If product.image exists and is a string, use it
+    // If product.image exists, is a string, and doesn't start with /placeholder.svg
     if (product.image && typeof product.image === "string") {
-      return product.image
+      // If it's already a full URL (starts with http or https), use it as is
+      if (product.image.startsWith("http://") || product.image.startsWith("https://")) {
+        return product.image
+      }
+      // If it's a relative path but not the placeholder, use it
+      else if (!product.image.includes("/placeholder.svg")) {
+        return product.image
+      }
     }
     // Otherwise use the default image
     return defaultImage
@@ -80,37 +83,12 @@ export function ProductDisplay({ product, onEdit }: ProductDisplayProps) {
               )}
             </div>
           </div>
-          <div>
-            <p className="text-muted-foreground">Min Stock</p>
-            <p className="font-medium">{product.min_stock}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">Purchase Price</p>
-            <p className="font-medium">{product.purchase_price?.toFixed(2) || "N/A"} DH</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">Expiry Date</p>
-            <div className="flex items-center gap-2">
-              <p className="font-medium">{formatDate(product.expiry_date)}</p>
-              {product.isExpiringSoon && <AlertTriangle className="h-4 w-4 text-amber-500" />}
-            </div>
-          </div>
-          <div>
-            <p className="text-muted-foreground">Notification Days</p>
-            <p className="font-medium">{product.expiry_notification_days || 30}</p>
-          </div>
         </div>
-
-        {showStockControl && <StockControl product={product} onClose={() => setShowStockControl(false)} />}
 
         <Separator />
       </CardContent>
 
       <CardFooter className="flex gap-2">
-        <Button className="flex-1" variant="outline" onClick={() => setShowStockControl(!showStockControl)}>
-          <Package className="mr-2 h-4 w-4" />
-          {showStockControl ? "Hide Stock Control" : "Stock Control"}
-        </Button>
         <Button className="flex-1" onClick={onEdit}>
           <Edit className="mr-2 h-4 w-4" />
           Edit Product
