@@ -22,6 +22,8 @@ import { useRouter } from "next/navigation"
 import { fetchProductByBarcode, saveProduct } from "@/services/product-service"
 import { fetchCategories, checkCategoriesExist, createDefaultCategoryIfNeeded } from "@/services/category-service"
 import { useSettings } from "@/contexts/settings-context"
+// Comment out the import for now since we're having issues with it
+// import { subscribeToProducts, subscribeToCategories } from "@/lib/realtime-service"
 
 interface ScannerViewProps {
   initialTab?: string | null
@@ -41,33 +43,17 @@ export function ScannerView({ initialTab = "scan" }: ScannerViewProps) {
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const { settings } = useSettings()
 
-  // Add state for duplicate product confirmation
+  // Add state for existing product dialog
+  const [existingProduct, setExistingProduct] = useState<Product | null>(null)
+  const [showExistingProductDialog, setShowExistingProductDialog] = useState(false)
+
+  // Add state for duplicate product dialog
   const [duplicateProduct, setDuplicateProduct] = useState<Product | null>(null)
   const [showDuplicateDialog, setShowDuplicateDialog] = useState(false)
   const [pendingProductData, setPendingProductData] = useState<Product | null>(null)
 
-  // Add this function to the ScannerView component
-  const debugProductData = (product: Product) => {
-    console.log("Debug product data:")
-    console.log("- ID:", product.id)
-    console.log("- Name:", product.name)
-    console.log("- Category ID:", product.category_id)
-    console.log("- Category object:", product.category)
-    console.log("- Categories object:", product.categories)
-
-    // Try to extract category name
-    let categoryName = null
-
-    if (typeof product.category === "string") {
-      categoryName = product.category
-    } else if (product.category && typeof product.category === "object" && "name" in product.category) {
-      categoryName = product.category.name
-    } else if (product.categories && typeof product.categories === "object" && "name" in product.categories) {
-      categoryName = product.categories.name
-    }
-
-    console.log("- Extracted category name:", categoryName)
-  }
+  // Add debugging state
+  const [debugInfo, setDebugInfo] = useState<string>("")
 
   useEffect(() => {
     // Fetch categories when component mounts
@@ -92,6 +78,7 @@ export function ScannerView({ initialTab = "scan" }: ScannerViewProps) {
       try {
         const hasCategories = await checkCategoriesExist()
         if (!hasCategories) {
+          // Pass no arguments since createDefaultCategoryIfNeeded doesn't expect any
           await createDefaultCategoryIfNeeded()
           // Reload categories after creating defaults
           const categoriesData = await fetchCategories()
@@ -104,6 +91,9 @@ export function ScannerView({ initialTab = "scan" }: ScannerViewProps) {
 
     loadCategories()
     checkAndCreateCategories()
+
+    // Empty cleanup function for now
+    return () => {}
   }, [toast])
 
   // Add this function to map category names from web sources to your database categories
@@ -127,7 +117,7 @@ export function ScannerView({ initialTab = "scan" }: ScannerViewProps) {
     return null
   }
 
-  // Update the handleBarcodeDetected function to set category_id when possible
+  // Update the handleBarcodeDetected function to check for existing products
   const handleBarcodeDetected = async (barcode: string) => {
     try {
       // Reset all states at the beginning of a new search
@@ -141,18 +131,32 @@ export function ScannerView({ initialTab = "scan" }: ScannerViewProps) {
       setDuplicateProduct(null)
       setShowDuplicateDialog(false)
       setPendingProductData(null)
+      setExistingProduct(null)
+      setShowExistingProductDialog(false)
+
+      // Add debug info
+      setDebugInfo(`Scanning barcode: ${barcode}`)
 
       // First, check if the product exists in our database
       const dbProduct = await fetchProductByBarcode(barcode)
 
+      // Update debug info
+      setDebugInfo((prev) => `${prev}\nDatabase product found: ${dbProduct ? "Yes" : "No"}`)
+
       if (dbProduct) {
-        // Product found in database
-        debugProductData(dbProduct)
-        setCurrentProduct(dbProduct)
-        setWebProductInfo(null)
-        setShowForm(false)
+        // Product found in database - show the existing product dialog
+        setDebugInfo((prev) => `${prev}\nSetting existing product and showing dialog`)
+        setExistingProduct(dbProduct)
+        setShowExistingProductDialog(true)
+
+        // Add a toast to confirm the dialog should be showing
+        toast({
+          title: "Product Found",
+          description: "Existing product found in database. Dialog should be showing.",
+        })
       } else {
         // Product not found in database, try to fetch from web
+        setDebugInfo((prev) => `${prev}\nFetching product from web`)
         try {
           console.log(`Fetching product info for barcode: ${barcode}`)
           const response = await fetch(`/api/fetch-product?barcode=${barcode}`)
@@ -254,7 +258,7 @@ export function ScannerView({ initialTab = "scan" }: ScannerViewProps) {
     }
   }
 
-  // Add this function after the handleBarcodeDetected function
+  // Add this function to reset all states
   const resetStates = () => {
     setCurrentProduct(null)
     setWebProductInfo(null)
@@ -266,6 +270,8 @@ export function ScannerView({ initialTab = "scan" }: ScannerViewProps) {
     setDuplicateProduct(null)
     setShowDuplicateDialog(false)
     setPendingProductData(null)
+    setExistingProduct(null)
+    setShowExistingProductDialog(false)
   }
 
   const handleFormCancel = () => {
@@ -306,7 +312,8 @@ export function ScannerView({ initialTab = "scan" }: ScannerViewProps) {
   const saveProductAndUpdateUI = async (product: Product) => {
     try {
       setIsLoading(true)
-      // Save the product to the database
+
+      // Save the product to the database - saveProduct only expects one argument
       const savedProduct = await saveProduct(product)
 
       // Show success toast
@@ -319,7 +326,6 @@ export function ScannerView({ initialTab = "scan" }: ScannerViewProps) {
       resetStates()
 
       // Then set the current product
-      debugProductData(savedProduct)
       setCurrentProduct(savedProduct)
 
       // Add to local history - IMPROVED HISTORY HANDLING
@@ -361,6 +367,29 @@ export function ScannerView({ initialTab = "scan" }: ScannerViewProps) {
     } finally {
       setIsLoading(false)
       setShowDuplicateDialog(false)
+    }
+  }
+
+  // Handle edit button click in the existing product dialog
+  const handleEditExistingProduct = () => {
+    if (existingProduct) {
+      setCurrentProduct(existingProduct)
+      setShowForm(true)
+      setShowExistingProductDialog(false)
+    }
+  }
+
+  // Handle cancel button click in the existing product dialog
+  const handleCancelExistingProduct = () => {
+    setShowExistingProductDialog(false)
+    resetStates()
+  }
+
+  // Handle view details button click in the existing product dialog
+  const handleViewExistingProduct = () => {
+    if (existingProduct) {
+      setCurrentProduct(existingProduct)
+      setShowExistingProductDialog(false)
     }
   }
 
@@ -437,11 +466,53 @@ export function ScannerView({ initialTab = "scan" }: ScannerViewProps) {
     }
   }
 
-  // Replace the Tabs component with this updated version
+  // Add a function to manually test the dialog
+  const testExistingProductDialog = () => {
+    // Create a sample product
+    const sampleProduct: Product = {
+      id: "test-id",
+      name: "Test Product",
+      barcode: "1234567890",
+      price: "99.99",
+      stock: 10,
+      min_stock: 5, // Add the required min_stock property
+      category: { id: "cat-id", name: "Test Category" },
+      category_id: "cat-id",
+      created_at: new Date().toISOString(),
+    }
+
+    // Set the existing product and show the dialog
+    setExistingProduct(sampleProduct)
+    setShowExistingProductDialog(true)
+
+    // Add a toast to confirm the dialog should be showing
+    toast({
+      title: "Test Dialog",
+      description: "Testing the existing product dialog.",
+    })
+  }
+
   return (
     <div className="w-full">
       <div className="space-y-4">
         <BarcodeScanner onBarcodeDetected={handleBarcodeDetected} isLoading={isLoading} />
+
+        {/* Add a test button */}
+        <div className="flex justify-center mt-4">
+          <Button onClick={testExistingProductDialog} variant="outline">
+            Test Existing Product Dialog
+          </Button>
+        </div>
+
+        {/* Add debug info */}
+        {debugInfo && (
+          <Alert className="mt-4">
+            <AlertTitle>Debug Info</AlertTitle>
+            <AlertDescription>
+              <pre className="whitespace-pre-wrap">{debugInfo}</pre>
+            </AlertDescription>
+          </Alert>
+        )}
 
         {error && (
           <Alert variant={productNotAvailable ? "default" : "destructive"} className="mb-4">
@@ -454,19 +525,25 @@ export function ScannerView({ initialTab = "scan" }: ScannerViewProps) {
         {showForm && (
           <ProductForm
             initialData={{
-              name: webProductInfo?.name || "",
-              // Ensure price is set from settings if not provided
-              price: webProductInfo?.price || settings.inventory.defaultSellingPrice || "",
-              barcode: currentBarcode,
-              stock: settings?.inventory?.defaultStock || 0,
-              min_stock: settings?.inventory?.defaultMinStock || 0,
-              image: webProductInfo?.image || "",
-              // Ensure purchase price is set from settings if not provided
-              purchase_price: webProductInfo?.purchase_price || settings.inventory.defaultPurchasePrice || "",
-              quantity: webProductInfo?.quantity || null,
-              // Ensure category is set from settings if not provided
-              category_id: webProductInfo?.category_id || settings.inventory.defaultCategoryId || "",
-              expiry_notification_days: 30,
+              ...(currentProduct || {}),
+              name: webProductInfo?.name || currentProduct?.name || "",
+              price: webProductInfo?.price || currentProduct?.price || settings.inventory.defaultSellingPrice || "",
+              barcode: currentBarcode || currentProduct?.barcode || "",
+              stock: currentProduct?.stock || settings?.inventory?.defaultStock || 0,
+              min_stock: currentProduct?.min_stock || settings?.inventory?.defaultMinStock || 0,
+              image: webProductInfo?.image || currentProduct?.image || "",
+              purchase_price:
+                webProductInfo?.purchase_price ||
+                currentProduct?.purchase_price ||
+                settings.inventory.defaultPurchasePrice ||
+                "",
+              quantity: webProductInfo?.quantity || currentProduct?.quantity || null,
+              category_id:
+                webProductInfo?.category_id ||
+                currentProduct?.category_id ||
+                settings.inventory.defaultCategoryId ||
+                "",
+              expiry_notification_days: currentProduct?.expiry_notification_days || 30,
             }}
             categories={categories}
             onCancel={handleFormCancel}
@@ -477,6 +554,59 @@ export function ScannerView({ initialTab = "scan" }: ScannerViewProps) {
 
         {currentProduct && !showForm && <ProductDisplay product={currentProduct} onEdit={() => setShowForm(true)} />}
       </div>
+
+      {/* Existing Product Dialog */}
+      <Dialog open={showExistingProductDialog} onOpenChange={setShowExistingProductDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Product Already Exists</DialogTitle>
+            <DialogDescription>
+              A product with barcode {existingProduct?.barcode} already exists in the database.
+            </DialogDescription>
+          </DialogHeader>
+
+          {existingProduct && (
+            <div className="py-4">
+              <div className="bg-muted p-3 rounded-md mb-4">
+                <p className="font-medium text-lg mb-2">{existingProduct.name}</p>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <p>
+                    <strong>Price:</strong> {existingProduct.price} DH
+                  </p>
+                  <p>
+                    <strong>Stock:</strong> {existingProduct.stock}
+                  </p>
+                  {existingProduct.purchase_price && (
+                    <p>
+                      <strong>Purchase Price:</strong> {existingProduct.purchase_price} DH
+                    </p>
+                  )}
+                  {existingProduct.category && (
+                    <p>
+                      <strong>Category:</strong>{" "}
+                      {typeof existingProduct.category === "string"
+                        ? existingProduct.category
+                        : existingProduct.category.name}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="flex justify-between">
+            <Button variant="outline" onClick={handleCancelExistingProduct}>
+              Cancel
+            </Button>
+            <div className="space-x-2">
+              <Button variant="secondary" onClick={handleViewExistingProduct}>
+                View Details
+              </Button>
+              <Button onClick={handleEditExistingProduct}>Edit Product</Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Duplicate Product Confirmation Dialog */}
       <Dialog open={showDuplicateDialog} onOpenChange={setShowDuplicateDialog}>

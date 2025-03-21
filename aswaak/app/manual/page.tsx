@@ -12,6 +12,15 @@ import { fetchProductByBarcode, saveProduct } from "@/services/product-service"
 import { fetchCategories } from "@/services/category-service"
 import { useSettings } from "@/contexts/settings-context"
 import type { Product } from "@/types/product"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog"
+import { Button } from "@/components/ui/button"
 
 export default function ManualPage() {
   const [currentProduct, setCurrentProduct] = useState<Product | null>(null)
@@ -22,6 +31,9 @@ export default function ManualPage() {
   const [categories, setCategories] = useState<any[]>([])
   const [currentBarcode, setCurrentBarcode] = useState<string>("")
   const [productNotAvailable, setProductNotAvailable] = useState(false)
+  // Add state for existing product dialog
+  const [existingProduct, setExistingProduct] = useState<Product | null>(null)
+  const [showExistingProductDialog, setShowExistingProductDialog] = useState(false)
   const { toast } = useToast()
   const { settings } = useSettings()
   const searchParams = useSearchParams()
@@ -59,10 +71,9 @@ export default function ManualPage() {
       const dbProduct = await fetchProductByBarcode(barcode)
 
       if (dbProduct) {
-        // Product found in database
-        setCurrentProduct(dbProduct)
-        setWebProductInfo(null)
-        setShowForm(false)
+        // Product found in database - show the existing product dialog
+        setExistingProduct(dbProduct)
+        setShowExistingProductDialog(true)
       } else {
         // Product not found in database, try to fetch from web
         try {
@@ -232,6 +243,34 @@ export default function ManualPage() {
     }
   }
 
+  // Handle edit button click in the existing product dialog
+  const handleEditExistingProduct = () => {
+    if (existingProduct) {
+      setCurrentProduct(existingProduct)
+      setShowForm(true)
+      setShowExistingProductDialog(false)
+    }
+  }
+
+  // Handle cancel button click in the existing product dialog
+  const handleCancelExistingProduct = () => {
+    setShowExistingProductDialog(false)
+    setCurrentProduct(null)
+    setWebProductInfo(null)
+    setError(null)
+    setShowForm(false)
+    setCurrentBarcode("")
+    setProductNotAvailable(false)
+  }
+
+  // Handle view details button click in the existing product dialog
+  const handleViewExistingProduct = () => {
+    if (existingProduct) {
+      setCurrentProduct(existingProduct)
+      setShowExistingProductDialog(false)
+    }
+  }
+
   return (
     <main className="flex min-h-screen flex-col items-center p-4">
       <div className="w-full max-w-md">
@@ -259,19 +298,25 @@ export default function ManualPage() {
         {showForm && (
           <ProductForm
             initialData={{
-              name: webProductInfo?.name || "",
-              // Ensure price is set from settings if not provided
-              price: webProductInfo?.price || settings.inventory.defaultSellingPrice || "",
-              barcode: currentBarcode,
-              stock: settings?.inventory?.defaultStock || 0,
-              min_stock: settings?.inventory?.defaultMinStock || 0,
-              image: webProductInfo?.image || "",
-              // Ensure purchase price is set from settings if not provided
-              purchase_price: webProductInfo?.purchase_price || settings.inventory.defaultPurchasePrice || "",
-              quantity: webProductInfo?.quantity || null,
-              // Ensure category is set from settings if not provided
-              category_id: webProductInfo?.category_id || settings.inventory.defaultCategoryId || "",
-              expiry_notification_days: 30,
+              ...currentProduct, // Add this to include all existing product data
+              name: currentProduct?.name || webProductInfo?.name || "",
+              price: currentProduct?.price || webProductInfo?.price || settings.inventory.defaultSellingPrice || "",
+              barcode: currentProduct?.barcode || currentBarcode,
+              stock: currentProduct?.stock || settings?.inventory?.defaultStock || 0,
+              min_stock: currentProduct?.min_stock || settings?.inventory?.defaultMinStock || 0,
+              image: currentProduct?.image || webProductInfo?.image || "",
+              purchase_price:
+                currentProduct?.purchase_price ||
+                webProductInfo?.purchase_price ||
+                settings.inventory.defaultPurchasePrice ||
+                "",
+              quantity: currentProduct?.quantity || webProductInfo?.quantity || null,
+              category_id:
+                currentProduct?.category_id ||
+                webProductInfo?.category_id ||
+                settings.inventory.defaultCategoryId ||
+                "",
+              expiry_notification_days: currentProduct?.expiry_notification_days || 30,
             }}
             categories={categories}
             onCancel={handleFormCancel}
@@ -282,6 +327,58 @@ export default function ManualPage() {
 
         {currentProduct && !showForm && <ProductDisplay product={currentProduct} onEdit={() => setShowForm(true)} />}
       </div>
+      {/* Existing Product Dialog */}
+      <Dialog open={showExistingProductDialog} onOpenChange={setShowExistingProductDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Product Already Exists</DialogTitle>
+            <DialogDescription>
+              A product with barcode {existingProduct?.barcode} already exists in the database.
+            </DialogDescription>
+          </DialogHeader>
+
+          {existingProduct && (
+            <div className="py-4">
+              <div className="bg-muted p-3 rounded-md mb-4">
+                <p className="font-medium text-lg mb-2">{existingProduct.name}</p>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <p>
+                    <strong>Price:</strong> {existingProduct.price} DH
+                  </p>
+                  <p>
+                    <strong>Stock:</strong> {existingProduct.stock}
+                  </p>
+                  {existingProduct.purchase_price && (
+                    <p>
+                      <strong>Purchase Price:</strong> {existingProduct.purchase_price} DH
+                    </p>
+                  )}
+                  {existingProduct.category && (
+                    <p>
+                      <strong>Category:</strong>{" "}
+                      {typeof existingProduct.category === "string"
+                        ? existingProduct.category
+                        : existingProduct.category.name}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="flex justify-between">
+            <Button variant="outline" onClick={handleCancelExistingProduct}>
+              Cancel
+            </Button>
+            <div className="space-x-2">
+              <Button variant="secondary" onClick={handleViewExistingProduct}>
+                View Details
+              </Button>
+              <Button onClick={handleEditExistingProduct}>Edit Product</Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
   )
 }

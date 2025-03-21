@@ -5,7 +5,7 @@ import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
 import { Toaster } from "@/components/ui/toaster"
 import { AppSidebar } from "@/components/app-sidebar"
-import { DebugPanel } from "@/components/debug-panel"
+//import { DebugPanel } from "@/components/debug-panel"
 import { SettingsProvider } from "@/contexts/settings-context"
 
 const inter = Inter({ subsets: ["latin"] })
@@ -30,7 +30,7 @@ export default function RootLayout({
               <main className="flex-1 overflow-y-auto">{children}</main>
             </div>
             <Toaster />
-            <DebugPanel />
+          
           </SettingsProvider>
         </ThemeProvider>
       </body>
