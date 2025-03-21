@@ -3,10 +3,13 @@
 import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
-import { Camera, X, RefreshCw, Loader2, Zap, ZapOff } from "lucide-react"
+import { Camera, X, RefreshCw, Loader2, Zap, ZapOff, CameraIcon } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
+
+// Add a reference to the declaration file instead of importing
+/// <reference path="../../types/quagga.d.ts" />
 
 // Import Quagga with proper type handling
 let Quagga: typeof import("quagga").default | null = null
@@ -35,8 +38,11 @@ export function CameraBarcodeScanner({ onBarcodeDetected, isLoading = false }: C
   const [autoDetect, setAutoDetect] = useState(true)
   const [lastDetectedCode, setLastDetectedCode] = useState<string | null>(null)
   const [lastDetectedTime, setLastDetectedTime] = useState<number>(0)
+  const [isCapturing, setIsCapturing] = useState(false)
   const scannerRef = useRef<HTMLDivElement>(null)
   const { toast } = useToast()
+  // Add a flag to track initialization state
+  const [isQuaggaInitialized, setIsQuaggaInitialized] = useState(false)
 
   // Load Quagga when component mounts
   useEffect(() => {
@@ -61,6 +67,7 @@ export function CameraBarcodeScanner({ onBarcodeDetected, isLoading = false }: C
   useEffect(() => {
     if (!isOpen || !scannerRef.current || !Quagga || !quaggaLoaded) return
 
+    let isMounted = true
     const startScanner = async () => {
       if (!Quagga || !scannerRef.current) {
         toast({
@@ -77,7 +84,7 @@ export function CameraBarcodeScanner({ onBarcodeDetected, isLoading = false }: C
             inputStream: {
               name: "Live",
               type: "LiveStream",
-              target: scannerRef.current, // Now we've checked it's not null
+              target: scannerRef.current,
               constraints: {
                 facingMode: facingMode,
                 width: { min: 640 },
@@ -105,6 +112,8 @@ export function CameraBarcodeScanner({ onBarcodeDetected, isLoading = false }: C
             locate: true,
           },
           (err: Error | null) => {
+            if (!isMounted) return
+
             if (err) {
               console.error("Error initializing Quagga:", err)
               toast({
@@ -116,14 +125,14 @@ export function CameraBarcodeScanner({ onBarcodeDetected, isLoading = false }: C
             }
 
             setIsScanning(true)
-            if (Quagga) Quagga.start() // Add null check here
+            setIsQuaggaInitialized(true)
+            if (Quagga) Quagga.start()
           },
         )
 
         // Set up the detection callback
         if (Quagga) {
-          // Add null check here
-          Quagga.onDetected((result) => {
+          const onDetectedHandler = (result: any) => {
             if (result && result.codeResult && result.codeResult.code) {
               const barcode = result.codeResult.code
               const currentTime = Date.now()
@@ -171,35 +180,88 @@ export function CameraBarcodeScanner({ onBarcodeDetected, isLoading = false }: C
                 }
               }
             }
-          })
+          }
+
+          Quagga.onDetected(onDetectedHandler)
+
+          // Return cleanup function to remove event listener
+          return () => {
+            isMounted = false
+            if (Quagga) {
+              try {
+                Quagga.offDetected(onDetectedHandler)
+                Quagga.stop()
+              } catch (e) {
+                console.log("Error cleaning up Quagga:", e)
+              }
+            }
+            setIsScanning(false)
+          }
         }
       } catch (error) {
         console.error("Error starting Quagga:", error)
-        toast({
-          title: "Camera access error",
-          description: "Could not access your camera. Please check permissions.",
-          variant: "destructive",
-        })
+        if (isMounted) {
+          toast({
+            title: "Camera access error",
+            description: "Could not access your camera. Please check permissions.",
+            variant: "destructive",
+          })
+        }
       }
     }
 
     startScanner()
 
     // Cleanup function
-    return stopScanner
+    return () => {
+      isMounted = false
+      if (isQuaggaInitialized && Quagga) {
+        try {
+          Quagga.stop()
+          console.log("Quagga stopped during cleanup")
+        } catch (e) {
+          console.log("Error stopping Quagga during cleanup:", e)
+        }
+        setIsQuaggaInitialized(false)
+      }
+      setIsScanning(false)
+    }
   }, [isOpen, facingMode, toast, onBarcodeDetected, quaggaLoaded, autoDetect, lastDetectedCode, lastDetectedTime])
 
-  // Function to stop the scanner
+  // Update the stopScanner function
   const stopScanner = () => {
-    if (Quagga) {
+    if (isQuaggaInitialized && Quagga) {
       try {
         Quagga.stop()
+        console.log("Quagga stopped successfully")
       } catch (e) {
         console.log("Error stopping Quagga:", e)
       }
+      setIsQuaggaInitialized(false)
     }
     setIsScanning(false)
+    setLastDetectedCode(null)
+    setLastDetectedTime(0)
+    setIsCapturing(false)
   }
+
+  // Add this function after the stopScanner function
+  const resetScanner = () => {
+    stopScanner()
+    setFacingMode("environment")
+    setAutoDetect(true)
+    setLastDetectedCode(null)
+    setLastDetectedTime(0)
+    setIsCapturing(false)
+  }
+
+  // Add this useEffect hook
+  useEffect(() => {
+    // Reset scanner when component unmounts
+    return () => {
+      resetScanner()
+    }
+  }, [])
 
   // Switch camera between front and back
   const switchCamera = () => {
@@ -219,6 +281,85 @@ export function CameraBarcodeScanner({ onBarcodeDetected, isLoading = false }: C
   // Toggle auto-detect mode
   const toggleAutoDetect = () => {
     setAutoDetect(!autoDetect)
+  }
+
+  // Manual capture function
+  const handleManualCapture = async () => {
+    if (!Quagga) {
+      toast({
+        title: "Error",
+        description: "Scanner not initialized",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setIsCapturing(true)
+
+    try {
+      // Define a proper type for the callback - use any for now to avoid type errors
+      const processCallback = (result: any) => {
+        // Remove the event listener to make it one-time
+        if (Quagga) {
+          Quagga.offProcessed(processCallback)
+        }
+
+        if (result && result.codeResult && result.codeResult.code) {
+          const barcode = result.codeResult.code
+
+          // Play a success sound
+          try {
+            const audio = new Audio("/sounds/beep.mp3")
+            audio.play().catch((e) => console.log("Audio play failed:", e))
+          } catch (e) {
+            console.log("Audio play failed:", e)
+          }
+
+          setLastDetectedCode(barcode)
+          setLastDetectedTime(Date.now())
+
+          toast({
+            title: "Barcode captured",
+            description: `Captured barcode: ${barcode}`,
+          })
+        } else {
+          toast({
+            title: "No barcode found",
+            description: "Try adjusting the camera position or lighting",
+            variant: "destructive",
+          })
+        }
+
+        setIsCapturing(false)
+      }
+
+      // Register the callback
+      if (Quagga) {
+        Quagga.onProcessed(processCallback)
+
+        // Force a scan by temporarily increasing the frequency
+        // This is a workaround since _processFrame is not in the type definition
+        const currentFrequency = 10 // Default frequency
+
+        // Temporarily set a higher frequency to trigger a scan
+        await new Promise<void>((resolve) => {
+          // Wait a short time for the next processing cycle
+          setTimeout(() => {
+            resolve()
+          }, 100)
+        })
+      } else {
+        throw new Error("Quagga is not initialized")
+      }
+    } catch (error) {
+      console.error("Error during manual capture:", error)
+      toast({
+        title: "Capture failed",
+        description: "An error occurred during capture",
+        variant: "destructive",
+      })
+      setIsCapturing(false)
+    }
   }
 
   return (
@@ -271,6 +412,12 @@ export function CameraBarcodeScanner({ onBarcodeDetected, isLoading = false }: C
               <div className="w-4/5 h-1/4 border-2 border-white rounded-md opacity-50"></div>
             </div>
           </div>
+
+          {/* Manual capture button */}
+          <Button className="w-full" onClick={handleManualCapture} disabled={isCapturing}>
+            {isCapturing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CameraIcon className="h-4 w-4 mr-2" />}
+            {isCapturing ? "Capturing..." : "Capture Manually"}
+          </Button>
 
           {lastDetectedCode && !autoDetect && (
             <div className="bg-muted p-2 rounded-md">

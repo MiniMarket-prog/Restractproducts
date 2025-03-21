@@ -14,6 +14,9 @@ interface ProductDisplayProps {
 }
 
 export function ProductDisplay({ product, onEdit }: ProductDisplayProps) {
+  // Log the product to see what we're working with
+  console.log("Product in ProductDisplay:", JSON.stringify(product, null, 2))
+
   // Updated formatDate to handle null values
   const formatDate = (dateString?: string | null): string => {
     if (!dateString) return "N/A"
@@ -40,6 +43,49 @@ export function ProductDisplay({ product, onEdit }: ProductDisplayProps) {
     return defaultImage
   }
 
+  // Get category name with better handling of different formats
+  const getCategoryName = (): string | null => {
+    console.log("Getting category name from:", product.category, product.categories, product.category_id)
+
+    // If no category data at all
+    if (!product.category && !product.categories && !product.category_id) {
+      console.log("No category data found")
+      return null
+    }
+
+    // If category is a string
+    if (typeof product.category === "string") {
+      console.log("Category is a string:", product.category)
+      return product.category
+    }
+
+    // If category is an object with name property
+    if (product.category && typeof product.category === "object") {
+      console.log("Category is an object:", product.category)
+      if ("name" in product.category && product.category.name) {
+        return product.category.name
+      }
+    }
+
+    // If categories is an object with name property (from Supabase join)
+    if (product.categories && typeof product.categories === "object") {
+      console.log("Categories is an object:", product.categories)
+      if ("name" in product.categories && product.categories.name) {
+        return product.categories.name
+      }
+    }
+
+    console.log("No category name found in any property")
+    return null
+  }
+
+  // Format the product name to include quantity if available
+  const displayName = product.quantity ? `${product.name} ${product.quantity}` : product.name
+
+  // Get category name
+  const categoryName = getCategoryName()
+  console.log("Resolved category name:", categoryName)
+
   return (
     <Card className="mb-4 overflow-hidden">
       <div className="bg-gradient-to-r from-primary/10 to-primary/5 p-6 flex justify-center">
@@ -48,19 +94,19 @@ export function ProductDisplay({ product, onEdit }: ProductDisplayProps) {
           alt={product.name}
           width={200}
           height={200}
-          className="object-contain h-48"
+          className="object-contain h-48 w-auto" // Add w-auto to maintain aspect ratio
         />
       </div>
 
       <CardHeader className="pb-2">
         <div className="flex justify-between items-start">
           <div>
-            {product.category && (
+            {categoryName && (
               <Badge variant="outline" className="mb-2">
-                {product.category.name}
+                {categoryName}
               </Badge>
             )}
-            <CardTitle className="text-xl">{product.name}</CardTitle>
+            <CardTitle className="text-xl">{displayName}</CardTitle>
           </div>
           <div className="text-2xl font-bold text-primary">{product.price} DH</div>
         </div>

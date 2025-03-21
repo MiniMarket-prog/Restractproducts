@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Loader2, Camera } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { CameraBarcodeScanner } from "@/components/camera-barcode-scanner"
+import { useEffect } from "react"
 
 interface BarcodeScannerProps {
   onBarcodeDetected: (barcode: string) => void
@@ -12,6 +13,19 @@ interface BarcodeScannerProps {
 
 export function BarcodeScanner({ onBarcodeDetected, isLoading }: BarcodeScannerProps) {
   const { toast } = useToast()
+
+  // Add this at the beginning of the BarcodeScanner function
+  const resetScanner = () => {
+    // Reset any internal state if needed
+  }
+
+  // Add this useEffect hook
+  useEffect(() => {
+    // Reset scanner when component unmounts
+    return () => {
+      resetScanner()
+    }
+  }, [])
 
   // For demo purposes, we'll keep the manual scan button
   const simulateScan = () => {

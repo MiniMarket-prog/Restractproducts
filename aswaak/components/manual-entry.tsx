@@ -4,10 +4,9 @@ import type React from "react"
 
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Loader2 } from "lucide-react"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Loader2, Barcode } from "lucide-react"
 
 interface ManualEntryProps {
   onSubmit: (barcode: string) => void
@@ -27,20 +26,17 @@ export function ManualEntry({ onSubmit, isLoading }: ManualEntryProps) {
   return (
     <Card className="mb-4">
       <CardHeader>
-        <CardTitle className="text-lg">Enter Barcode Manually</CardTitle>
+        <CardTitle className="text-lg">Manual Entry</CardTitle>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="barcode">Barcode</Label>
+          <div className="flex flex-col space-y-2">
             <Input
-              id="barcode"
-              placeholder="e.g. 6111245591063"
+              type="text"
+              placeholder="Enter barcode"
               value={barcode}
               onChange={(e) => setBarcode(e.target.value)}
               disabled={isLoading}
-              pattern="[0-9]*"
-              inputMode="numeric"
             />
           </div>
           <Button type="submit" className="w-full" disabled={isLoading || !barcode.trim()}>
@@ -50,7 +46,10 @@ export function ManualEntry({ onSubmit, isLoading }: ManualEntryProps) {
                 Searching...
               </>
             ) : (
-              "Search Product"
+              <>
+                <Barcode className="mr-2 h-4 w-4" />
+                Search Barcode
+              </>
             )}
           </Button>
         </form>

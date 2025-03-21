@@ -1,18 +1,18 @@
-import { ModeToggle } from "@/components/mode-toggle"
-import { ShoppingBag } from "lucide-react"
+"use client"
+
+import { Button } from "@/components/ui/button"
+import { Settings } from "lucide-react"
+import Link from "next/link"
 
 export function AppHeader() {
   return (
-    <header className="sticky top-0 z-10 w-full bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b">
-      <div className="container flex h-14 items-center">
-        <div className="flex items-center gap-2 font-semibold">
-          <ShoppingBag className="h-5 w-5 text-primary" />
-          <span>Aswak Scanner</span>
-        </div>
-        <div className="flex flex-1 items-center justify-end">
-          <ModeToggle />
-        </div>
-      </div>
+    <header className="w-full py-4 px-2 flex justify-between items-center border-b mb-4">
+      <h1 className="text-xl font-bold">Barcode Scanner</h1>
+      <Link href="/settings">
+        <Button variant="ghost" size="icon" title="Settings">
+          <Settings className="h-5 w-5" />
+        </Button>
+      </Link>
     </header>
   )
 }

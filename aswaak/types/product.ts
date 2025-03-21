@@ -17,12 +17,14 @@ export interface Product {
   purchase_price?: number | null
   expiry_date?: string | null
   expiry_notification_days?: number | null
+  quantity?: string | null // Add quantity field
 
   // UI-only properties (not stored in DB)
-  category?: Category
+  category?: Category | string | null
+  categories?: Category | null // Add this to match Supabase's join result
   isLowStock?: boolean
   isExpiringSoon?: boolean
-  categories?: any // Added to handle the nested categories from Supabase
+  source?: string // Add source to track which website provided the data
 }
 
 export interface ProductFetchResult {
@@ -31,5 +33,6 @@ export interface ProductFetchResult {
   image?: string
   description?: string
   category?: string
+  quantity?: string // Add quantity field
 }
 

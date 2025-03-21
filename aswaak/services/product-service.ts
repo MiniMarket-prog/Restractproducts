@@ -25,27 +25,6 @@ const mockProducts: Record<string, Product> = {
   },
 }
 
-export async function fetchCategories(): Promise<Category[]> {
-  if (!isSupabaseInitialized()) {
-    console.warn("Supabase client not available. Using mock data.")
-    return mockCategories
-  }
-
-  try {
-    const { data, error } = await supabase.from("categories").select("*").order("name")
-
-    if (error) {
-      console.error("Error fetching categories:", error)
-      return mockCategories
-    }
-
-    return data || []
-  } catch (err) {
-    console.error("Error in fetchCategories:", err)
-    return mockCategories
-  }
-}
-
 export async function fetchProductByBarcode(barcode: string): Promise<Product | null> {
   if (!barcode) return null
 
@@ -55,6 +34,9 @@ export async function fetchProductByBarcode(barcode: string): Promise<Product | 
   }
 
   try {
+    console.log(`Fetching product with barcode: ${barcode}`)
+
+    // Use a more explicit query to ensure we get the category data
     const { data, error } = await supabase
       .from("products")
       .select(`
@@ -77,14 +59,23 @@ export async function fetchProductByBarcode(barcode: string): Promise<Product | 
     }
 
     if (data) {
-      return {
+      // Log the raw data to see what we're getting from Supabase
+      console.log("Raw product data from Supabase:", JSON.stringify(data, null, 2))
+
+      // Create a properly structured product object
+      const product: Product = {
         ...data,
-        category: data.categories as unknown as Category,
+        category: data.categories, // Assign the categories object directly
         isLowStock: data.stock <= data.min_stock,
         isExpiringSoon: data.expiry_date
           ? isExpiringSoon(data.expiry_date, data.expiry_notification_days || 30)
           : false,
-      } as Product
+      }
+
+      // Log the processed product
+      console.log("Processed product:", JSON.stringify(product, null, 2))
+
+      return product
     }
 
     return null
@@ -94,9 +85,17 @@ export async function fetchProductByBarcode(barcode: string): Promise<Product | 
   }
 }
 
+// Update the saveProduct function to handle local category IDs
+
 export async function saveProduct(product: Product): Promise<Product> {
   if (!product.barcode) {
     throw new Error("Barcode is required")
+  }
+
+  // Check if we're using a local category ID (starts with "local-")
+  if (product.category_id && product.category_id.startsWith("local-")) {
+    console.log("Using local category ID, setting category_id to null for database storage")
+    product.category_id = null // Set to null for database storage
   }
 
   if (!isSupabaseInitialized()) {
@@ -128,11 +127,14 @@ export async function saveProduct(product: Product): Promise<Product> {
       stock: product.stock || 0,
       min_stock: product.min_stock || 0,
       image: product.image,
-      category_id: product.category_id,
+      category_id: product.category_id || null,
       purchase_price: product.purchase_price || null,
       expiry_date: product.expiry_date || null,
       expiry_notification_days: product.expiry_notification_days || 30,
     }
+
+    // Log the product data being saved
+    console.log("Saving product with data:", productData)
 
     if (existingProduct) {
       // Update existing product
@@ -150,9 +152,26 @@ export async function saveProduct(product: Product): Promise<Product> {
       }
 
       console.log("Product updated successfully:", data)
+
+      // Fetch the category to include in the returned product
+      let category = null
+      if (data.category_id) {
+        const { data: categoryData, error: categoryError } = await supabase
+          .from("categories")
+          .select("*")
+          .eq("id", data.category_id)
+          .single()
+
+        if (categoryError) {
+          console.error("Error fetching category:", categoryError)
+        } else if (categoryData) {
+          category = categoryData
+        }
+      }
+
       return {
         ...data,
-        category: existingProduct.category,
+        category: category,
         isLowStock: data.stock <= data.min_stock,
         isExpiringSoon: data.expiry_date
           ? isExpiringSoon(data.expiry_date, data.expiry_notification_days || 30)
@@ -161,6 +180,12 @@ export async function saveProduct(product: Product): Promise<Product> {
     } else {
       // Insert new product
       console.log("Inserting new product")
+
+      // Remove any empty id field to let Supabase generate it
+      if (product.id === "" || !product.id) {
+        delete product.id
+      }
+
       const { data, error } = await supabase.from("products").insert(productData).select().single()
 
       if (error) {
@@ -171,16 +196,18 @@ export async function saveProduct(product: Product): Promise<Product> {
       console.log("Product inserted successfully:", data)
 
       // Fetch the category to include in the returned product
-      let category: Category | null = null
-      if (product.category_id) {
-        const { data: categoryData } = await supabase
+      let category = null
+      if (data.category_id) {
+        const { data: categoryData, error: categoryError } = await supabase
           .from("categories")
           .select("*")
-          .eq("id", product.category_id)
+          .eq("id", data.category_id)
           .single()
 
-        if (categoryData) {
-          category = categoryData as Category
+        if (categoryError) {
+          console.error("Error fetching category:", categoryError)
+        } else if (categoryData) {
+          category = categoryData
         }
       }
 
