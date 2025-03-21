@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Loader2, Camera } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
-import { CameraBarcodeScanner } from "@/components/camera-barcode-scanner"
+import { MobileCameraScanner } from "@/components/mobile-camera-scanner"
 import { useEffect } from "react"
 
 interface BarcodeScannerProps {
@@ -38,7 +38,7 @@ export function BarcodeScanner({ onBarcodeDetected, isLoading }: BarcodeScannerP
     <Card className="mb-4">
       <CardContent className="p-4 flex flex-col items-center">
         <div className="w-full flex flex-col gap-4 mt-4">
-          <CameraBarcodeScanner onBarcodeDetected={onBarcodeDetected} isLoading={isLoading} />
+          <MobileCameraScanner onBarcodeDetected={onBarcodeDetected} isLoading={isLoading} />
 
           <Button className="w-full" variant="secondary" onClick={simulateScan} disabled={isLoading}>
             {isLoading ? (
