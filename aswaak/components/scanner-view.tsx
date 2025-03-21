@@ -1,12 +1,8 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { BarcodeScanner } from "@/components/barcode-scanner"
-import { ManualEntry } from "@/components/manual-entry"
 import { ProductDisplay } from "@/components/product-display"
-import { ProductHistory } from "@/components/product-history"
-import { ProductSearch } from "@/components/product-search"
 import { ProductForm } from "@/components/product-form"
 import type { Product, Category } from "@/types/product"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -25,6 +21,7 @@ import { Input } from "@/components/ui/input"
 import { useRouter } from "next/navigation"
 import { fetchProductByBarcode, saveProduct } from "@/services/product-service"
 import { fetchCategories, checkCategoriesExist, createDefaultCategoryIfNeeded } from "@/services/category-service"
+import { useSettings } from "@/contexts/settings-context"
 
 interface ScannerViewProps {
   initialTab?: string | null
@@ -42,6 +39,7 @@ export function ScannerView({ initialTab = "scan" }: ScannerViewProps) {
   const { toast } = useToast()
   const router = useRouter()
   const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const { settings } = useSettings()
 
   // Add state for duplicate product confirmation
   const [duplicateProduct, setDuplicateProduct] = useState<Product | null>(null)
@@ -205,18 +203,22 @@ export function ScannerView({ initialTab = "scan" }: ScannerViewProps) {
           }
 
           // Set the web product info
+          setShowForm(true)
           setWebProductInfo({
             name: data.name,
-            price: data.price,
+            // ALWAYS use the default selling price from settings
+            price: settings.inventory.defaultSellingPrice,
             image: data.image,
             description: `Category: ${data.category || "Unknown"}, In Stock: ${data.isInStock ? "Yes" : "No"}`,
             category: data.category,
-            category_id: category_id, // Add the matched category_id
-            quantity: data.quantity || null, // Add quantity field
+            // Only use the matched category if it exists, otherwise use default
+            category_id: category_id || settings.inventory.defaultCategoryId,
+            quantity: data.quantity || null,
+            // Always use the default purchase price from settings
+            purchase_price: settings.inventory.defaultPurchasePrice,
           })
 
           setCurrentProduct(null)
-          setShowForm(true)
         } catch (err) {
           console.error("Error fetching product from web:", err)
 
@@ -320,14 +322,36 @@ export function ScannerView({ initialTab = "scan" }: ScannerViewProps) {
       debugProductData(savedProduct)
       setCurrentProduct(savedProduct)
 
-      // Add to local history
+      // Add to local history - IMPROVED HISTORY HANDLING
       const history = JSON.parse(localStorage.getItem("scanHistory") || "[]")
-      const exists = history.some((item: Product) => item.barcode === product.barcode)
 
-      if (!exists) {
-        const updatedHistory = [product, ...history].slice(0, 50) // Keep last 50 items
-        localStorage.setItem("scanHistory", JSON.stringify(updatedHistory))
+      // Check if this product already exists in history by barcode or ID
+      const existingIndex = history.findIndex(
+        (item: Product) =>
+          (item.barcode && item.barcode === savedProduct.barcode) || (item.id && item.id === savedProduct.id),
+      )
+
+      // Create a history entry with timestamp
+      const historyEntry = {
+        ...savedProduct,
+        created_at: savedProduct.created_at || new Date().toISOString(), // Ensure we have a timestamp
       }
+
+      let updatedHistory = [...history]
+
+      if (existingIndex >= 0) {
+        // Replace the existing entry
+        updatedHistory[existingIndex] = historyEntry
+      } else {
+        // Add as a new entry at the beginning
+        updatedHistory = [historyEntry, ...history]
+      }
+
+      // Keep only the last 50 items to prevent localStorage from getting too large
+      updatedHistory = updatedHistory.slice(0, 50)
+
+      // Save to localStorage
+      localStorage.setItem("scanHistory", JSON.stringify(updatedHistory))
     } catch (error) {
       toast({
         title: "Error Saving Product",
@@ -415,128 +439,44 @@ export function ScannerView({ initialTab = "scan" }: ScannerViewProps) {
 
   // Replace the Tabs component with this updated version
   return (
-    <div className="w-full max-w-md mx-auto flex flex-col min-h-screen">
-      <Tabs defaultValue={initialTab || "scan"} className="flex-1 flex flex-col">
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="scan" onClick={resetStates}>
-            Scan
-          </TabsTrigger>
-          <TabsTrigger value="search" onClick={resetStates}>
-            Search
-          </TabsTrigger>
-          <TabsTrigger value="manual" onClick={resetStates}>
-            Manual
-          </TabsTrigger>
-          <TabsTrigger value="history" onClick={resetStates}>
-            History
-          </TabsTrigger>
-        </TabsList>
+    <div className="w-full">
+      <div className="space-y-4">
+        <BarcodeScanner onBarcodeDetected={handleBarcodeDetected} isLoading={isLoading} />
 
-        <TabsContent value="scan" className="flex-1 flex flex-col">
-          <BarcodeScanner onBarcodeDetected={handleBarcodeDetected} isLoading={isLoading} />
+        {error && (
+          <Alert variant={productNotAvailable ? "default" : "destructive"} className="mb-4">
+            {productNotAvailable ? <Info className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+            <AlertTitle>{productNotAvailable ? "Product Not Available" : "Error"}</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
 
-          {error && (
-            <Alert variant={productNotAvailable ? "default" : "destructive"} className="mb-4">
-              {productNotAvailable ? <Info className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
-              <AlertTitle>{productNotAvailable ? "Product Not Available" : "Error"}</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-
-          {showForm && (
-            <ProductForm
-              initialData={{
-                name: webProductInfo?.name || "",
-                price: webProductInfo?.price || "",
-                barcode: currentBarcode,
-                stock: 0,
-                min_stock: 0,
-                image: webProductInfo?.image || "",
-                purchase_price: 0,
-                quantity: webProductInfo?.quantity || null, // Add quantity field
-                expiry_notification_days: 30,
-              }}
-              categories={categories}
-              onCancel={handleFormCancel}
-              onSuccess={handleFormSuccess}
-              isLoading={isLoading}
-            />
-          )}
-
-          {currentProduct && !showForm && <ProductDisplay product={currentProduct} onEdit={() => setShowForm(true)} />}
-        </TabsContent>
-
-        <TabsContent value="search" className="flex-1 flex flex-col">
-          <ProductSearch
-            onProductSelect={(product) => {
-              setCurrentProduct(product)
-              setShowForm(false)
+        {showForm && (
+          <ProductForm
+            initialData={{
+              name: webProductInfo?.name || "",
+              // Ensure price is set from settings if not provided
+              price: webProductInfo?.price || settings.inventory.defaultSellingPrice || "",
+              barcode: currentBarcode,
+              stock: settings?.inventory?.defaultStock || 0,
+              min_stock: settings?.inventory?.defaultMinStock || 0,
+              image: webProductInfo?.image || "",
+              // Ensure purchase price is set from settings if not provided
+              purchase_price: webProductInfo?.purchase_price || settings.inventory.defaultPurchasePrice || "",
+              quantity: webProductInfo?.quantity || null,
+              // Ensure category is set from settings if not provided
+              category_id: webProductInfo?.category_id || settings.inventory.defaultCategoryId || "",
+              expiry_notification_days: 30,
             }}
+            categories={categories}
+            onCancel={handleFormCancel}
+            onSuccess={handleFormSuccess}
             isLoading={isLoading}
           />
+        )}
 
-          {currentProduct && !showForm && <ProductDisplay product={currentProduct} onEdit={() => setShowForm(true)} />}
-        </TabsContent>
-
-        <TabsContent value="manual" className="flex-1">
-          <ManualEntry onSubmit={handleBarcodeDetected} isLoading={isLoading} />
-
-          {error && (
-            <Alert variant={productNotAvailable ? "default" : "destructive"} className="mb-4">
-              {productNotAvailable ? <Info className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
-              <AlertTitle>{productNotAvailable ? "Product Not Available" : "Error"}</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-
-          {showForm && (
-            <ProductForm
-              initialData={{
-                name: webProductInfo?.name || "",
-                price: webProductInfo?.price || "",
-                barcode: currentBarcode,
-                stock: 0,
-                min_stock: 0,
-                image: webProductInfo?.image || "",
-                purchase_price: 0,
-                quantity: webProductInfo?.quantity || null, // Add quantity field
-                expiry_notification_days: 30,
-              }}
-              categories={categories}
-              onCancel={handleFormCancel}
-              onSuccess={handleFormSuccess}
-              isLoading={isLoading}
-            />
-          )}
-
-          {currentProduct && !showForm && <ProductDisplay product={currentProduct} onEdit={() => setShowForm(true)} />}
-        </TabsContent>
-
-        <TabsContent value="history" className="flex-1">
-          <ProductHistory
-            onSelectProduct={(product) => {
-              setCurrentProduct(product)
-              setShowForm(false)
-            }}
-          />
-        </TabsContent>
-      </Tabs>
-
-      {/* Stock Update Dialog */}
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Update Stock</DialogTitle>
-          </DialogHeader>
-          <StockUpdateForm
-            onUpdate={handleStockUpdate}
-            onClose={handleCloseDialog}
-            currentStock={currentProduct?.stock || 0}
-            isLoading={isLoading}
-          />
-          <DialogFooter></DialogFooter>
-        </DialogContent>
-      </Dialog>
+        {currentProduct && !showForm && <ProductDisplay product={currentProduct} onEdit={() => setShowForm(true)} />}
+      </div>
 
       {/* Duplicate Product Confirmation Dialog */}
       <Dialog open={showDuplicateDialog} onOpenChange={setShowDuplicateDialog}>
@@ -544,7 +484,8 @@ export function ScannerView({ initialTab = "scan" }: ScannerViewProps) {
           <DialogHeader>
             <DialogTitle>Duplicate Barcode Detected</DialogTitle>
             <DialogDescription>
-              A product with barcode {pendingProductData?.barcode} already exists in the database.
+              A product with barcode {pendingProductData?.barcode} already exists in the database. Please review the
+              details below and decide if you want to replace the existing product.
             </DialogDescription>
           </DialogHeader>
 

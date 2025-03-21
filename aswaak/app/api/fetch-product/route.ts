@@ -295,6 +295,7 @@ const aswakAssalamScraper: WebsiteScraper = {
       const match = html.match(pattern)
       if (match && match[1]) {
         imageUrl = match[1]
+        console.log("Found image URL:", imageUrl)
         break
       }
     }
@@ -537,6 +538,7 @@ export async function GET(request: Request) {
     }
 
     if (productData) {
+      console.log("API returning product with image URL:", productData.image)
       return NextResponse.json({
         ...productData,
         barcode,

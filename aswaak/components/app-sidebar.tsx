@@ -25,6 +25,7 @@ export function AppSidebar({ className }: SidebarProps) {
     setOpen(false)
   }, [pathname])
 
+  // Update the navItems array to make Home and Scan distinct
   const navItems = [
     {
       title: "Home",
@@ -38,22 +39,22 @@ export function AppSidebar({ className }: SidebarProps) {
     },
     {
       title: "Search",
-      href: "/?tab=search",
+      href: "/search",
       icon: Search,
     },
     {
       title: "Manual Entry",
-      href: "/?tab=manual",
+      href: "/manual",
       icon: ClipboardList,
     },
     {
       title: "History",
-      href: "/?tab=history",
+      href: "/history",
       icon: Clock,
     },
     {
       title: "Categories",
-      href: "/settings?tab=categories",
+      href: "/categories", // Changed from "/settings?tab=categories" to "/categories"
       icon: Tag,
     },
     {
@@ -63,9 +64,14 @@ export function AppSidebar({ className }: SidebarProps) {
     },
   ]
 
+  // Update the isActive function to handle URL parameters
   const isActive = (href: string) => {
     if (href === "/") {
-      return pathname === "/"
+      return pathname === "/" && !pathname.includes("?tab=")
+    }
+    if (href.includes("?tab=")) {
+      const [path, query] = href.split("?")
+      return pathname === path && pathname.includes(query)
     }
     return pathname.startsWith(href.split("?")[0])
   }

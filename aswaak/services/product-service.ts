@@ -85,12 +85,14 @@ export async function fetchProductByBarcode(barcode: string): Promise<Product | 
   }
 }
 
-// Update the saveProduct function to handle local category IDs
-
+// Update the saveProduct function to ensure image URLs are preserved
 export async function saveProduct(product: Product): Promise<Product> {
   if (!product.barcode) {
     throw new Error("Barcode is required")
   }
+
+  // Log the product being saved
+  console.log("Saving product with image URL:", product.image)
 
   // Check if we're using a local category ID (starts with "local-")
   if (product.category_id && product.category_id.startsWith("local-")) {
@@ -126,7 +128,7 @@ export async function saveProduct(product: Product): Promise<Product> {
       barcode: product.barcode,
       stock: product.stock || 0,
       min_stock: product.min_stock || 0,
-      image: product.image,
+      image: product.image, // Ensure image is included
       category_id: product.category_id || null,
       purchase_price: product.purchase_price || null,
       expiry_date: product.expiry_date || null,

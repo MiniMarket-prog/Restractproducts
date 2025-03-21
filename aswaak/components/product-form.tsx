@@ -12,6 +12,39 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast"
 import { fetchCategories, createDefaultCategoryIfNeeded } from "@/services/category-service"
 import type { Product, Category } from "@/types/product"
+import { useSettings } from "@/contexts/settings-context"
+
+// Add this function after the imports but before the component definition
+function ImagePreview({ src }: { src: string }) {
+  const [error, setError] = useState(false)
+
+  if (!src || error) return null
+
+  return (
+    <div className="mt-2 mb-4">
+      <p className="text-sm text-muted-foreground mb-2">Image Preview:</p>
+      <div className="border rounded-md p-2 bg-muted/20 flex justify-center">
+        <img
+          src={src || "/placeholder.svg"}
+          alt="Product preview"
+          className="max-h-40 object-contain"
+          onError={() => setError(true)}
+        />
+      </div>
+    </div>
+  )
+}
+
+// Add a function to calculate selling price based on purchase price and margin
+// Add this function after the imports but before the component definition
+function calculateSellingPrice(purchasePrice: string, marginPercentage: number): string {
+  const purchase = Number.parseFloat(purchasePrice)
+  if (isNaN(purchase) || purchase <= 0) return "0.00"
+
+  const margin = marginPercentage / 100
+  const sellingPrice = purchase * (1 + margin)
+  return sellingPrice.toFixed(2)
+}
 
 const productFormSchema = z.object({
   id: z.string().optional().nullable(),
@@ -57,6 +90,9 @@ export function ProductForm({
   onCancel,
   isLoading,
 }: ProductFormProps) {
+  // Get settings for default values
+  const { settings } = useSettings()
+
   // Use either provided initialValues or initialData
   const initialFormValues = initialValues || initialData || {}
 
@@ -132,22 +168,69 @@ export function ProductForm({
     }
   }, [toast, propCategories])
 
+  // Use settings for default values
+  const defaultStock = settings.inventory.defaultStock || 0
+  const defaultMinStock = settings.inventory.defaultMinStock || 0
+
   const form = useForm<ProductFormValues>({
     resolver: zodResolver(productFormSchema),
     defaultValues: {
       name: initialFormValues.name || "",
-      price: initialFormValues.price || "",
-      purchase_price: initialFormValues.purchase_price ? String(initialFormValues.purchase_price) : "",
+      // Ensure price is set from settings if not provided
+      price: initialFormValues.price || settings.inventory.defaultSellingPrice || "",
+      // Ensure purchase price is set from settings if not provided
+      purchase_price: initialFormValues.purchase_price
+        ? String(initialFormValues.purchase_price)
+        : settings.inventory.defaultPurchasePrice || "",
       image: initialFormValues.image || "",
       barcode: initialFormValues.barcode || "",
-      stock: initialFormValues.stock || 0,
-      min_stock: initialFormValues.min_stock || 0,
-      category_id: initialFormValues.category_id || "",
+      stock: initialFormValues.stock !== undefined ? initialFormValues.stock : defaultStock,
+      min_stock: initialFormValues.min_stock !== undefined ? initialFormValues.min_stock : defaultMinStock,
+      // Ensure category is set from settings if not provided
+      category_id: initialFormValues.category_id || settings.inventory.defaultCategoryId || "",
       expiry_date: initialFormValues.expiry_date || null,
       expiry_notification_days: initialFormValues.expiry_notification_days || null,
       id: initialFormValues.id || null,
     },
   })
+
+  // Let's add a debug log to help diagnose issues with settings
+  // Add this after the form initialization
+
+  // Add this debug logging:
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "production") {
+      console.log("ProductForm: Settings loaded:", {
+        defaultSellingPrice: settings.inventory.defaultSellingPrice,
+        defaultPurchasePrice: settings.inventory.defaultPurchasePrice,
+        defaultCategoryId: settings.inventory.defaultCategoryId,
+        priceFormat: settings.inventory.priceFormat,
+        defaultMargin: settings.inventory.defaultMargin,
+      })
+
+      console.log("ProductForm: Initial form values:", {
+        price: form.getValues("price"),
+        purchase_price: form.getValues("purchase_price"),
+        category_id: form.getValues("category_id"),
+      })
+    }
+  }, [])
+
+  // Add a useEffect to update the selling price when purchase price changes (if using percentage margin)
+  // Add this inside the ProductForm component, after the form initialization
+  useEffect(() => {
+    // Only apply automatic price calculation if:
+    // 1. We're creating a new product (no initialData.id)
+    // 2. The settings are set to use percentage margin
+    // 3. The purchase price has a value
+    if ((!initialFormValues.id || initialFormValues.id === "") && settings.inventory.priceFormat === "percentage") {
+      const purchasePrice = form.watch("purchase_price")
+      if (purchasePrice && purchasePrice !== "0" && purchasePrice !== "0.00") {
+        const calculatedPrice = calculateSellingPrice(purchasePrice, settings.inventory.defaultMargin)
+        form.setValue("price", calculatedPrice)
+      }
+    }
+  }, [form.watch("purchase_price"), settings.inventory.priceFormat, settings.inventory.defaultMargin])
 
   function onSubmit(values: ProductFormValues) {
     // Remove empty ID field
@@ -220,6 +303,7 @@ export function ProductForm({
             </FormItem>
           )}
         />
+        <ImagePreview src={form.watch("image") || "/placeholder.svg"} />
         <FormField
           control={form.control}
           name="barcode"

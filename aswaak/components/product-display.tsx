@@ -3,10 +3,10 @@
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Edit } from "lucide-react"
-import Image from "next/image"
 import type { Product } from "@/types/product"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
+import { useSettings } from "@/contexts/settings-context"
 
 interface ProductDisplayProps {
   product: Product
@@ -14,6 +14,8 @@ interface ProductDisplayProps {
 }
 
 export function ProductDisplay({ product, onEdit }: ProductDisplayProps) {
+  const { settings } = useSettings()
+
   // Log the product to see what we're working with
   console.log("Product in ProductDisplay:", JSON.stringify(product, null, 2))
 
@@ -26,20 +28,31 @@ export function ProductDisplay({ product, onEdit }: ProductDisplayProps) {
   // Create a default image path
   const defaultImage = "/placeholder.svg?height=200&width=200"
 
-  // Type guard function to ensure we have a valid string
+  // Always show images regardless of settings
+  const showImages = true // Override settings to always show images
+
+  // Update the getValidImageSrc function to better handle image URLs
   const getValidImageSrc = (): string => {
-    // If product.image exists, is a string, and doesn't start with /placeholder.svg
+    console.log("Getting image source from:", product.image)
+
+    // If product.image exists and is a string
     if (product.image && typeof product.image === "string") {
-      // If it's already a full URL (starts with http or https), use it as is
+      console.log("Product has image:", product.image)
+
+      // If it's a valid URL (starts with http or https), use it as is
       if (product.image.startsWith("http://") || product.image.startsWith("https://")) {
+        console.log("Using full URL image:", product.image)
         return product.image
       }
       // If it's a relative path but not the placeholder, use it
       else if (!product.image.includes("/placeholder.svg")) {
+        console.log("Using relative path image:", product.image)
         return product.image
       }
     }
+
     // Otherwise use the default image
+    console.log("Using default image")
     return defaultImage
   }
 
@@ -88,13 +101,16 @@ export function ProductDisplay({ product, onEdit }: ProductDisplayProps) {
 
   return (
     <Card className="mb-4 overflow-hidden">
+      {/* Always show the image section */}
       <div className="bg-gradient-to-r from-primary/10 to-primary/5 p-6 flex justify-center">
-        <Image
+        <img
           src={getValidImageSrc() || "/placeholder.svg"}
           alt={product.name}
-          width={200}
-          height={200}
-          className="object-contain h-48 w-auto" // Add w-auto to maintain aspect ratio
+          className="object-contain h-48 w-auto max-w-full"
+          onError={(e) => {
+            console.error("Image failed to load:", (e.target as HTMLImageElement).src)
+            ;(e.target as HTMLImageElement).src = defaultImage
+          }}
         />
       </div>
 

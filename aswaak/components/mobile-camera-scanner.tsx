@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Camera, X, RefreshCw, AlertTriangle, Info, Play } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { useSettings } from "@/contexts/settings-context" // Add this import
 
 interface MobileCameraScannerProps {
   onBarcodeDetected: (barcode: string) => void
@@ -24,6 +25,7 @@ export function MobileCameraScanner({ onBarcodeDetected, isLoading = false }: Mo
   const [isScanning, setIsScanning] = useState(false)
   const [lastDetectedCode, setLastDetectedCode] = useState<string | null>(null)
   const scanIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const { settings } = useSettings() // Add this to access settings
 
   // Add debug info with timestamp
   const addDebugInfo = (message: string) => {
@@ -286,12 +288,14 @@ export function MobileCameraScanner({ onBarcodeDetected, isLoading = false }: Mo
       scanIntervalRef.current = null
     }
 
-    // Play success sound
-    try {
-      const audio = new Audio("/sounds/beep.mp3")
-      audio.play().catch((e) => console.log("Audio play failed:", e))
-    } catch (e) {
-      console.log("Audio play failed:", e)
+    // Play success sound if enabled in settings
+    if (settings.scanning.beepOnScan) {
+      try {
+        const audio = new Audio("/sounds/beep.mp3")
+        audio.play().catch((e) => console.log("Audio play failed:", e))
+      } catch (e) {
+        console.log("Audio play failed:", e)
+      }
     }
 
     // Call the callback with the detected barcode
@@ -663,6 +667,8 @@ export function MobileCameraScanner({ onBarcodeDetected, isLoading = false }: Mo
                     </div>
                     <div>• Mode: Manual capture only</div>
                     <div>• Last detected code: {lastDetectedCode || "None"}</div>
+                    <div>• Beep on scan: {settings.scanning.beepOnScan ? "Enabled" : "Disabled"}</div>
+                    <div>• Auto-detect: {settings.scanning.autoDetect ? "Enabled" : "Disabled"}</div>
                     {debugInfo.map((info, i) => (
                       <div key={i}>{info}</div>
                     ))}

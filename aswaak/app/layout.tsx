@@ -6,6 +6,7 @@ import { ThemeProvider } from "@/components/theme-provider"
 import { Toaster } from "@/components/ui/toaster"
 import { AppSidebar } from "@/components/app-sidebar"
 import { DebugPanel } from "@/components/debug-panel"
+import { SettingsProvider } from "@/contexts/settings-context"
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -23,12 +24,14 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className={inter.className}>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-          <div className="flex min-h-screen flex-col md:flex-row">
-            <AppSidebar />
-            <main className="flex-1 overflow-y-auto">{children}</main>
-          </div>
-          <Toaster />
-          <DebugPanel />
+          <SettingsProvider>
+            <div className="flex min-h-screen flex-col md:flex-row">
+              <AppSidebar />
+              <main className="flex-1 overflow-y-auto">{children}</main>
+            </div>
+            <Toaster />
+            <DebugPanel />
+          </SettingsProvider>
         </ThemeProvider>
       </body>
     </html>

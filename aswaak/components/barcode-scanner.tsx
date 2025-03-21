@@ -5,6 +5,7 @@ import { Loader2, Camera } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { MobileCameraScanner } from "@/components/mobile-camera-scanner"
 import { useEffect } from "react"
+import { useSettings } from "@/contexts/settings-context" // Add this import
 
 interface BarcodeScannerProps {
   onBarcodeDetected: (barcode: string) => void
@@ -13,6 +14,7 @@ interface BarcodeScannerProps {
 
 export function BarcodeScanner({ onBarcodeDetected, isLoading }: BarcodeScannerProps) {
   const { toast } = useToast()
+  const { settings } = useSettings() // Add this to access settings
 
   // Add this at the beginning of the BarcodeScanner function
   const resetScanner = () => {
