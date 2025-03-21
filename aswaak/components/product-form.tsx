@@ -65,11 +65,13 @@ export function ProductForm({
 
   const [categories, setCategories] = useState<Category[]>(propCategories || [])
   const { toast } = useToast()
+  const [isLoadingCategories, setIsLoadingCategories] = useState(false)
 
   useEffect(() => {
     // Only fetch categories if they weren't provided as props
     if (!propCategories || propCategories.length === 0) {
       const loadCategories = async () => {
+        setIsLoadingCategories(true)
         try {
           console.log("ProductForm: Loading categories...")
           const categoryList = await fetchCategories()
@@ -118,6 +120,8 @@ export function ProductForm({
             { id: "local-6", name: "Personal Care" },
             { id: "local-7", name: "Other" },
           ])
+        } finally {
+          setIsLoadingCategories(false)
         }
       }
 
@@ -264,12 +268,15 @@ export function ProductForm({
               <Select onValueChange={field.onChange} defaultValue={field.value}>
                 <FormControl>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select a category" />
+                    <SelectValue placeholder={isLoadingCategories ? "Loading categories..." : "Select a category"} />
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  {/* Add a debug message to see if categories are loaded */}
-                  {categories.length === 0 ? (
+                  {isLoadingCategories ? (
+                    <SelectItem value="loading" disabled>
+                      Loading categories...
+                    </SelectItem>
+                  ) : categories.length === 0 ? (
                     <SelectItem value="no-categories" disabled>
                       No categories available
                     </SelectItem>

@@ -13,6 +13,8 @@ const createDummyClient = () => {
         }),
         order: () => ({ data: [], error: null }),
         not: () => ({ data: [], error: null }),
+        limit: () => ({ data: [], error: null }),
+        count: () => ({ data: [], error: null }),
       }),
       insert: () => ({
         select: () => ({
@@ -51,6 +53,30 @@ export const supabase =
 export function isSupabaseInitialized() {
   const initialized = !!(supabaseUrl && supabaseAnonKey)
   console.log(`Supabase initialized: ${initialized}`)
+
+  if (!initialized) {
+    console.warn("Supabase environment variables are missing. Check your .env file or environment settings.")
+  }
+
   return initialized
+}
+
+// Add a function to test the Supabase connection
+export async function testSupabaseConnection() {
+  if (!isSupabaseInitialized()) {
+    return { success: false, message: "Supabase not initialized" }
+  }
+
+  try {
+    const { data, error } = await supabase.from("categories").select("count").limit(1)
+
+    if (error) {
+      return { success: false, message: error.message }
+    }
+
+    return { success: true, message: "Connection successful" }
+  } catch (err) {
+    return { success: false, message: err instanceof Error ? err.message : "Unknown error" }
+  }
 }
 

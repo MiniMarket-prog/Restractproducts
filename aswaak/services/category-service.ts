@@ -84,10 +84,33 @@ export async function fetchCategories(): Promise<Category[]> {
 
   try {
     console.log("Fetching categories from Supabase...")
+    console.log("Supabase URL:", process.env.NEXT_PUBLIC_SUPABASE_URL ? "Set" : "Not set")
+    console.log(
+      "Supabase Anon Key:",
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+        ? "Set (starts with " + process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY.substring(0, 3) + "...)"
+        : "Not set",
+    )
 
     // Add a delay to ensure the connection is established
     await new Promise((resolve) => setTimeout(resolve, 500))
 
+    // Test the connection first
+    try {
+      const { data: testData, error: testError } = await supabase.from("categories").select("count").limit(1)
+
+      if (testError) {
+        console.error("Supabase connection test failed:", testError)
+        return mockCategories
+      }
+
+      console.log("Supabase connection test successful")
+    } catch (testErr) {
+      console.error("Error testing Supabase connection:", testErr)
+      return mockCategories
+    }
+
+    // Now fetch the actual data
     const { data, error } = await supabase.from("categories").select("*").order("name").not("name", "is", null) // Skip entries with null names
 
     if (error) {
