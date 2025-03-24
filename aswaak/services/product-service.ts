@@ -1,5 +1,5 @@
 import { supabase, isSupabaseInitialized } from "@/lib/supabase"
-import type { Product, Category, ProductFetchResult } from "@/types/product"
+import type { Product, Category } from "@/types/product"
 
 // Renamed function to avoid naming conflicts
 function checkIfExpiringSoon(expiryDate: string, notificationDays: number): boolean {
@@ -160,7 +160,7 @@ export async function fetchProductByBarcode(barcode: string): Promise<Product | 
   }
 }
 
-// Add a new utility function for fetching with retry capability
+// Function to fetch with retry capability
 export async function fetchWithRetry(
   url: string,
   options: RequestInit = {},
@@ -318,40 +318,43 @@ export async function updateProductStock(id: string, newStock: number, userId?: 
   }
 }
 
-// Function to fetch product info from aswakassalam.com
-export async function fetchProductInfoFromWeb(barcode: string): Promise<ProductFetchResult | null> {
+// Function to fetch product info from web using our API route
+export async function fetchProductInfoFromWeb(barcode: string): Promise<Partial<Product> | null> {
   try {
-    // Call our API route to fetch product info
-    const response = await fetch(`/api/fetch-product?barcode=${barcode}`)
+    console.log(`Fetching product info for barcode: ${barcode}`)
+
+    // Use our API route instead of direct fetching
+    const response = await fetchWithRetry(
+      `/api/fetch-product?barcode=${encodeURIComponent(barcode)}`,
+      {},
+      3, // More retries for our own API
+      30000, // Longer timeout since our API tries multiple sources
+    )
 
     if (!response.ok) {
-      const errorData = await response.json()
-      console.error("Error from API:", errorData)
-
-      // If it's a 404 (product not available), throw a specific error
       if (response.status === 404) {
-        throw new Error("404: Product not available in Aswak Assalam")
+        console.log("Product not found in any source")
+        return null
       }
 
-      return null
+      const errorData = await response.json()
+      console.error("API error:", errorData)
+      throw new Error(errorData.message || "Failed to fetch product info")
     }
 
-    const data = await response.json()
-
-    // Format the price to ensure it's displayed correctly
-    const formattedPrice = data.price ? data.price.replace(",", ".") : "0.00" // Replace comma with dot for decimal
+    const productInfo = await response.json()
+    console.log("Product info from API:", productInfo)
 
     return {
-      name: data.name,
-      price: formattedPrice,
-      image: data.image,
-      description: `Category: ${data.category || "Unknown"}, In Stock: ${data.isInStock ? "Yes" : "No"}`,
-      category: data.category,
-      isInStock: Boolean(data.isInStock), // Fix: Use Boolean constructor to ensure it's a boolean
+      name: productInfo.name,
+      price: productInfo.price,
+      image: productInfo.image,
+      barcode: productInfo.barcode,
+      quantity: productInfo.quantity,
     }
   } catch (error) {
-    console.error("Error fetching product info from web:", error)
-    throw error
+    console.error("Error fetching product info:", error)
+    throw new Error(`Failed to fetch product info: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 

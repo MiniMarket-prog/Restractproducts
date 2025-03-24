@@ -1,37 +1,39 @@
 export interface Category {
   id: string
   name: string
+  description?: string
+  created_at?: string
+  updated_at?: string
 }
 
 export interface Product {
   id?: string
-  name: string
+  name: string // Required field
   barcode?: string
-  price: string
+  price?: string
   stock?: number
   min_stock?: number
   image?: string
-  category?: Category | null | string
   category_id?: string | null
-  isLowStock?: boolean
-  isExpiringSoon?: boolean
-  purchase_price?: string | number | null
-  quantity?: string | null
-  expiry_date?: string | null
-  expiry_notification_days?: number | null
+  category?: Category | null
+  quantity?: string
+  purchase_price?: string
+  expiry_date?: string
+  expiry_notification_days?: number
   created_at?: string
   updated_at?: string
   created_by?: string
   updated_by?: string
-  categories?: Category | null
+  isLowStock?: boolean
+  isExpiringSoon?: boolean
+  categories?: Category | null // For backward compatibility
 }
 
 export interface ProductFetchResult {
-  name: string
-  price: string
-  image: string
-  description?: string
-  category: string
-  isInStock: boolean
+  name?: string
+  price?: string
+  image?: string
+  barcode?: string
+  quantity?: string
 }
 

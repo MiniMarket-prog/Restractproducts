@@ -1,32 +1,37 @@
 import { NextResponse } from "next/server"
 
-// Define a type for product info that includes the optional notFound property
+// Define a type for product info
 type ProductInfo = {
   name: string
-  price: string
+  price?: string
   image: string
-  category: string
-  isInStock: boolean
-  notFound?: boolean
-  source?: string // Add source to track which website provided the data
-  quantity?: string // Add quantity field
+  barcode: string
+  quantity?: string
+  source?: string
 }
 
-// Define an interface for website scrapers
-interface WebsiteScraper {
-  name: string
-  baseUrl: string
-  urlPatterns: string[] // Different URL patterns to try
-  userAgents: string[] // User agents to try
-  extractProductInfo: (html: string, barcode: string) => ProductInfo
-  isNotFoundPage: (html: string) => boolean
-}
+// Simple in-memory cache for product info
+const productCache: Record<string, { data: ProductInfo; timestamp: number }> = {}
+const CACHE_TTL = 24 * 60 * 60 * 1000 // 24 hours in milliseconds
 
-// Different user agents to try
-const userAgents = [
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1",
-]
+// Function to fetch with timeout
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeout = 5000): Promise<Response> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+  try {
+    console.log(`Fetching ${url}`)
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    })
+    clearTimeout(timeoutId)
+    return response
+  } catch (error) {
+    clearTimeout(timeoutId)
+    throw error
+  }
+}
 
 // Function to decode HTML entities
 function decodeHtmlEntities(text: string): string {
@@ -38,123 +43,14 @@ function decodeHtmlEntities(text: string): string {
     "&gt;": ">",
     "&quot;": '"',
     "&#039;": "'",
-    "&#39;": "'",
     "&rsquo;": "'",
-    "&lsquo;": "'",
-    "&rdquo;": '"',
     "&ldquo;": '"',
-    "&ndash;": "–",
-    "&mdash;": "—",
+    "&rdquo;": '"',
     "&nbsp;": " ",
-    "&copy;": "©",
-    "&reg;": "®",
-    "&trade;": "™",
-    "&euro;": "€",
-    "&pound;": "£",
-    "&yen;": "¥",
-    "&cent;": "¢",
-    "&sect;": "§",
-    "&deg;": "°",
-    "&bull;": "•",
-    "&hellip;": "…",
-    "&prime;": "′",
-    "&Prime;": "″",
-    "&frasl;": "/",
-    "&times;": "×",
-    "&divide;": "÷",
-    "&plusmn;": "±",
-    "&minus;": "−",
-    "&sup1;": "¹",
-    "&sup2;": "²",
-    "&sup3;": "³",
-    "&frac14;": "¼",
-    "&frac12;": "½",
-    "&frac34;": "¾",
-    "&permil;": "‰",
-    "&micro;": "µ",
-    "&para;": "¶",
-    "&middot;": "·",
-    "&cedil;": "¸",
-    "&ordf;": "ª",
-    "&ordm;": "º",
-    "&not;": "¬",
-    "&shy;": "­",
-    "&macr;": "¯",
-    "&acute;": "´",
-    "&uml;": "¨",
-    "&circ;": "ˆ",
-    "&tilde;": "˜",
-    "&iexcl;": "¡",
-    "&iquest;": "¿",
-    "&szlig;": "ß",
-    "&agrave;": "à",
-    "&aacute;": "á",
-    "&acirc;": "â",
-    "&atilde;": "ã",
-    "&auml;": "ä",
-    "&aring;": "å",
-    "&aelig;": "æ",
-    "&ccedil;": "ç",
-    "&egrave;": "è",
-    "&eacute;": "é",
-    "&ecirc;": "ê",
-    "&euml;": "ë",
-    "&igrave;": "ì",
-    "&iacute;": "í",
-    "&icirc;": "î",
-    "&iuml;": "ï",
-    "&eth;": "ð",
-    "&ntilde;": "ñ",
-    "&ograve;": "ò",
-    "&oacute;": "ó",
-    "&ocirc;": "ô",
-    "&otilde;": "õ",
-    "&ouml;": "ö",
-    "&oslash;": "ø",
-    "&ugrave;": "ù",
-    "&uacute;": "ú",
-    "&ucirc;": "û",
-    "&uuml;": "ü",
-    "&yacute;": "ý",
-    "&thorn;": "þ",
-    "&yuml;": "ÿ",
-    "&Agrave;": "À",
-    "&Aacute;": "Á",
-    "&Acirc;": "Â",
-    "&Atilde;": "Ã",
-    "&Auml;": "Ä",
-    "&Aring;": "Å",
-    "&AElig;": "Æ",
-    "&Ccedil;": "Ç",
-    "&Egrave;": "È",
-    "&Eacute;": "É",
-    "&Ecirc;": "Ê",
-    "&Euml;": "Ë",
-    "&Igrave;": "Ì",
-    "&Iacute;": "Í",
-    "&Icirc;": "Î",
-    "&Iuml;": "Ï",
-    "&ETH;": "Ð",
-    "&Ntilde;": "Ñ",
-    "&Ograve;": "Ò",
-    "&Oacute;": "Ó",
-    "&Ocirc;": "Ô",
-    "&Otilde;": "Õ",
-    "&Ouml;": "Ö",
-    "&Oslash;": "Ø",
-    "&Ugrave;": "Ù",
-    "&Uacute;": "Ú",
-    "&Ucirc;": "Û",
-    "&Uuml;": "Ü",
-    "&Yacute;": "Ý",
-    "&THORN;": "Þ",
-    "&Yuml;": "Ÿ",
   }
 
   // Replace named entities
   let decodedText = text
-
-  // Replace all named entities
   for (const [entity, char] of Object.entries(entities)) {
     decodedText = decodedText.replace(new RegExp(entity, "g"), char)
   }
@@ -168,91 +64,25 @@ function decodeHtmlEntities(text: string): string {
   return decodedText
 }
 
-// Aswak Assalam scraper implementation
-const aswakAssalamScraper: WebsiteScraper = {
-  name: "Aswak Assalam",
-  baseUrl: "https://aswakassalam.com",
-  urlPatterns: ["https://aswakassalam.com/ean1/{barcode}", "https://aswakassalam.com/ean2/{barcode}"],
-  userAgents,
-
-  isNotFoundPage(html: string): boolean {
-    // Check for the specific 404 pattern provided by the user
-    const entryTitlePattern = /<h2\s+class="entry-title">404\s+<i\s+class="fas\s+fa-file"><\/i><\/h2>/i
-    if (entryTitlePattern.test(html)) {
-      console.log("Found 404 page with entry-title pattern")
-      return true
-    }
-
-    // Also check for the specific sorry message
-    if (html.includes("We're sorry, but the page you were looking for doesn't exist.")) {
-      console.log("Found 404 page with sorry message")
-      return true
-    }
-
-    // Also check for section with page-not-found class
-    if (html.includes('<section class="page-not-found">')) {
-      console.log("Found 404 page with page-not-found section")
-      return true
-    }
-
-    // Check for search page with no results
-    if (html.includes("Vous avez cherché") && !html.includes("product-inner")) {
-      console.log("Found search page with no results")
-      return true
-    }
-
-    // Check for "Aucun résultat" (No results) text
-    if (html.includes("Aucun résultat")) {
-      console.log("Found 'Aucun résultat' text")
-      return true
-    }
-
-    // Also check for other common 404 indicators
-    const notFoundPatterns = [
-      "404 - Page Not Found",
-      "Erreur 404",
-      "Page Not Found",
-      "No products were found matching your selection",
-    ]
-
-    for (const pattern of notFoundPatterns) {
-      if (html.includes(pattern)) {
-        console.log(`Found 404 page with pattern: ${pattern}`)
-        return true
-      }
-    }
-
-    return false
-  },
-
-  extractProductInfo(html: string, barcode: string): ProductInfo {
+// Function to extract product info from HTML
+function extractProductInfoFromHTML(html: string, barcode: string, source: string): ProductInfo | null {
+  try {
     // Extract product name
-    let name = `Product ${barcode}`
+    let name = ""
 
-    // First try to find the product title in the main product section
-    const productTitlePatterns = [
+    // Try multiple patterns for product name
+    const namePatterns = [
       /<h1[^>]*class="[^"]*product_title[^"]*"[^>]*>([\s\S]*?)<\/h1>/i,
-      /<h1[^>]*class="[^"]*entry-title[^"]*"[^>]*>([\s\S]*?)<\/h1>/i,
+      /<h1[^>]*>([\s\S]*?)<\/h1>/i,
+      /<div[^>]*class="[^"]*product-title[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
       /<span[^>]*class="[^"]*product-title[^"]*"[^>]*>([\s\S]*?)<\/span>/i,
-      /<div[^>]*class="[^"]*product_title[^>]*"*>([\s\S]*?)<\/div>/i,
-      // The exact pattern from the user's HTML
-      /<a[^>]*class="[^"]*product-loop-title[^"]*"[^>]*>\s*<h3[^>]*class="[^"]*woocommerce-loop-product__title[^"]*"[^>]*>([\s\S]*?)<\/h3>\s*<\/a>/i,
-      // Try to get the title from the breadcrumb or page title
-      /<title>(.*?)<\/title>/i,
     ]
 
-    for (const pattern of productTitlePatterns) {
+    for (const pattern of namePatterns) {
       const match = html.match(pattern)
       if (match && match[1]) {
         const extractedName = decodeHtmlEntities(match[1].replace(/<[^>]*>/g, "").trim())
-        // Skip search page titles and 404 pages
-        if (
-          extractedName &&
-          !extractedName.includes("Archives des") &&
-          !extractedName.includes("404") &&
-          !extractedName.includes("Vous avez cherché") &&
-          !extractedName.includes("Aucun résultat")
-        ) {
+        if (extractedName && !extractedName.includes("Recherche") && !extractedName.includes("404")) {
           name = extractedName
           break
         }
@@ -260,19 +90,15 @@ const aswakAssalamScraper: WebsiteScraper = {
     }
 
     // Extract price
-    let price = "0.00"
+    let price = ""
     const pricePatterns = [
       /<span[^>]*class="[^"]*price[^"]*"[^>]*>([\s\S]*?)Dh<\/span>/i,
-      /<span[^>]*class="[^"]*woocommerce-Price-amount[^"]*"[^>]*>([\s\S]*?)<\/span>/i,
-      /<p[^>]*class="[^"]*price[^"]*"[^>]*>([\s\S]*?)<\/p>/i,
-      /(\d+[,.]\d+)\s*Dh/i, // Generic price pattern
-      /(\d+[,.]\d+)\s*DH/i, // Alternative format
+      /<span[^>]*class="[^"]*price[^"]*"[^>]*>([\s\S]*?)<\/span>/i,
     ]
 
     for (const pattern of pricePatterns) {
       const match = html.match(pattern)
       if (match && match[1]) {
-        // Extract just the number from the price
         const priceText = match[1].replace(/<[^>]*>/g, "").trim()
         const priceNumber = priceText.match(/[\d,.]+/)
         if (priceNumber) {
@@ -283,83 +109,179 @@ const aswakAssalamScraper: WebsiteScraper = {
     }
 
     // Extract image URL
-    let imageUrl = "https://aswakassalam.com/wp-content/uploads/2023/01/placeholder-300x300.png"
+    let image = "/placeholder.svg?height=200&width=200"
     const imagePatterns = [
-      /<img[^>]*class="[^"]*wp-post-image[^"]*"[^>]*src="([^"]*)"[^>]*>/i,
-      /<img[^>]*src="([^"]*)"[^>]*class="[^"]*wp-post-image[^"]*"[^>]*>/i,
-      /<div[^>]*class="[^"]*woocommerce-product-gallery__image[^"]*"[^>]*>[\s\S]*?<img[^>]*src="([^"]*)"[^>]*>/i,
-      /<img[^>]*src="([^"]*)"[^>]*>/i, // Generic image pattern
+      /<img[^>]*id="og_image"[^>]*src="([^"]*)"[^>]*>/i,
+      /<img[^>]*class="[^"]*product_image[^"]*"[^>]*src="([^"]*)"[^>]*>/i,
+      /<img[^>]*class="[^"]*wp-post-image[^>]*src="([^"]*)"[^>]*>/i,
     ]
 
     for (const pattern of imagePatterns) {
       const match = html.match(pattern)
       if (match && match[1]) {
-        imageUrl = match[1]
-        console.log("Found image URL:", imageUrl)
+        image = match[1]
         break
       }
     }
 
-    // Extract category
-    let category = "Unknown"
-    const categoryPatterns = [
-      /<span[^>]*class="[^"]*posted_in[^"]*"[^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i,
-      /<a[^>]*rel="tag"[^>]*>([\s\S]*?)<\/a>/i,
-      /Catégorie[^:]*:\s*([^<]+)/i, // Generic category pattern
-      /CATÉGORIES\s*:\s*<[^>]*>([^<]+)/i, // Format seen in the screenshot
-      /CATÉGORIES\s*:\s*([^<]+)/i, // Alternative format
-    ]
-
-    for (const pattern of categoryPatterns) {
-      const match = html.match(pattern)
-      if (match && match[1]) {
-        category = decodeHtmlEntities(match[1].trim())
-        break
-      }
+    // If we couldn't extract essential info, return null
+    if (!name) {
+      return null
     }
-
-    // Extract stock status
-    let isInStock = true
-    const stockPatterns = [
-      /<p[^>]*class="[^"]*stock[^"]*"[^>]*>([\s\S]*?)<\/p>/i,
-      /<span[^>]*class="[^"]*stock[^"]*"[^>]*>([\s\S]*?)<\/span>/i,
-      /stock[^:]*:\s*([^<]+)/i, // Generic stock pattern
-      /AVAILABILITY\s*:\s*([^<]+)/i, // Format seen in the screenshot
-      /RUPTURE DE STOCK/i, // Out of stock indicator
-    ]
-
-    for (const pattern of stockPatterns) {
-      const match = html.match(pattern)
-      if (match && match[1]) {
-        const stockStatus = match[1].toLowerCase()
-        isInStock = !stockStatus.includes("rupture") && !stockStatus.includes("out of stock")
-        break
-      }
-    }
-
-    // Check for "RUPTURE DE STOCK" text anywhere in the HTML
-    if (html.includes("RUPTURE DE STOCK")) {
-      isInStock = false
-    }
-
-    console.log(`Extracted product info: Name=${name}, Price=${price}, Category=${category}, InStock=${isInStock}`)
 
     return {
       name,
       price,
-      image: imageUrl,
-      category,
-      isInStock,
-      source: "Aswak Assalam",
+      image,
+      barcode,
+      source,
     }
-  },
+  } catch (error) {
+    console.error("Error extracting product info from HTML:", error)
+    return null
+  }
 }
 
-// Open Food Facts API implementation
-async function fetchFromOpenFoodFacts(barcode: string): Promise<ProductInfo | null> {
+// Function to fetch product info from aswakassalam.com - OPTIMIZED
+async function fetchFromAswakAssalam(barcode: string): Promise<ProductInfo | null> {
   try {
-    console.log(`Fetching from Open Food Facts API: ${barcode}`)
-    const response = await fetch(`https://world.openfoodfacts.org/api/v2/product/${barcode}.json`)
+    // Only try the most likely URL patterns
+    const urls = [`https://aswakassalam.com/ean1/${barcode}`, `https://aswakassalam.com/ean2/${barcode}`]
+
+    const userAgent =
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+
+    for (const url of urls) {
+      try {
+        const response = await fetchWithTimeout(
+          url,
+          {
+            headers: {
+              "User-Agent": userAgent,
+              Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+              "Accept-Language": "en-US,en;q=0.5",
+            },
+          },
+          5000, // 5 second timeout
+        )
+
+        if (!response.ok) {
+          console.log(`Aswak Assalam ${url} returned status: ${response.status}`)
+          continue
+        }
+
+        const html = await response.text()
+
+        // Check if it's a 404 page or search page with no results
+        if (
+          html.includes("404") ||
+          html.includes("We're sorry, but the page you were looking for doesn't exist.") ||
+          html.includes("Aucun résultat")
+        ) {
+          console.log(`Aswak Assalam ${url}: Product not found (404 or no results)`)
+          continue
+        }
+
+        const productInfo = extractProductInfoFromHTML(html, barcode, `Aswak Assalam`)
+        if (productInfo && productInfo.name) {
+          return productInfo
+        }
+      } catch (error) {
+        console.error(`Error fetching from ${url}:`, error)
+      }
+    }
+
+    return null
+  } catch (error) {
+    console.error(`Error fetching from Aswak Assalam:`, error)
+    return null
+  }
+}
+
+// Function to fetch product info from French Open Food Facts website - OPTIMIZED
+async function fetchFromFrenchOpenFoodFacts(barcode: string): Promise<ProductInfo | null> {
+  try {
+    const url = `https://fr.openfoodfacts.org/produit/${barcode}`
+    const response = await fetchWithTimeout(
+      url,
+      {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+          "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+        },
+      },
+      8000, // 8 second timeout
+    )
+
+    if (!response.ok) {
+      console.log(`French Open Food Facts returned status: ${response.status}`)
+      return null
+    }
+
+    const html = await response.text()
+
+    // Check if it's an error page
+    if (html.includes("Erreur") || html.includes("Adresse invalide")) {
+      console.log("French Open Food Facts: Product not found (error page)")
+      return null
+    }
+
+    // Extract product name
+    let name = ""
+    const nameRegex = /<h1[^>]*>([\s\S]*?)<\/h1>/i
+    const nameMatch = html.match(nameRegex)
+    if (nameMatch && nameMatch[1]) {
+      name = decodeHtmlEntities(nameMatch[1].replace(/<[^>]*>/g, "").trim())
+    }
+
+    // Extract image URL
+    let image = "/placeholder.svg?height=200&width=200"
+
+    // First try to find the og_image
+    const ogImageRegex = /<img[^>]*id="og_image"[^>]*src="([^"]*)"[^>]*>/i
+    const ogImageMatch = html.match(ogImageRegex)
+    if (ogImageMatch && ogImageMatch[1]) {
+      console.log("Found og_image URL:", ogImageMatch[1])
+      image = ogImageMatch[1]
+    } else {
+      // Try alternative image selector
+      const altImageRegex = /<img[^>]*class="[^"]*product_image[^"]*"[^>]*src="([^"]*)"[^>]*>/i
+      const altImageMatch = html.match(altImageRegex)
+      if (altImageMatch && altImageMatch[1]) {
+        console.log("Found alternative image URL:", altImageMatch[1])
+        image = altImageMatch[1]
+      }
+    }
+
+    // If we couldn't extract essential info, return null
+    if (!name) {
+      return null
+    }
+
+    return {
+      name,
+      image,
+      barcode,
+      source: "French Open Food Facts",
+    }
+  } catch (error) {
+    console.error("Error fetching from French Open Food Facts:", error)
+    return null
+  }
+}
+
+// Function to fetch product info from Open Food Facts API - OPTIMIZED
+async function fetchFromOpenFoodFactsAPI(barcode: string): Promise<ProductInfo | null> {
+  try {
+    const response = await fetchWithTimeout(
+      `https://world.openfoodfacts.org/api/v2/product/${barcode}.json`,
+      {
+        headers: { "User-Agent": "BarcodeScannerApp/1.0" },
+      },
+      8000, // 8 second timeout
+    )
 
     if (!response.ok) {
       console.log(`Open Food Facts API returned status: ${response.status}`)
@@ -373,204 +295,141 @@ async function fetchFromOpenFoodFacts(barcode: string): Promise<ProductInfo | nu
       return null
     }
 
-    // Extract the relevant information
+    // Extract product information
     const product = data.product
-    let name = product.product_name ? decodeHtmlEntities(product.product_name) : `Product ${barcode}`
 
-    // Add quantity to the name if available
-    if (product.quantity) {
-      name = `${name} ${decodeHtmlEntities(product.quantity)}`
-    }
+    // Get product name
+    let name = product.product_name || product.generic_name || `Product ${barcode}`
 
     // Add brand to the name if available and not already part of the name
     if (product.brands && !name.includes(product.brands)) {
       name = `${name} - ${decodeHtmlEntities(product.brands)}`
     }
 
-    return {
-      name,
-      price: "0.00", // Price not available from Open Food Facts
-      image: product.image_url || "/placeholder.svg?height=200&width=200",
-      category: product.categories ? decodeHtmlEntities(product.categories) : "Food",
-      isInStock: true, // Stock information not available
-      source: "Open Food Facts",
-      quantity: product.quantity ? decodeHtmlEntities(product.quantity) : "",
+    // Get the best available image URL
+    let imageUrl = null
+
+    // Try to get the front image first
+    if (product.image_front_url) {
+      imageUrl = product.image_front_url
     }
-  } catch (error) {
-    console.error("Error fetching from Open Food Facts:", error)
-    return null
-  }
-}
-
-// Function to fetch product from a specific website
-async function fetchProductFromWebsite(scraper: WebsiteScraper, barcode: string): Promise<ProductInfo | null> {
-  let productData: ProductInfo | null = null
-  let responseStatus = null
-  let responseUrl = null
-  let notFoundCount = 0
-
-  // Try each URL pattern with different user agents
-  for (const urlPattern of scraper.urlPatterns) {
-    const url = urlPattern.replace("{barcode}", barcode)
-
-    for (const userAgent of scraper.userAgents) {
-      try {
-        console.log(`[${scraper.name}] Trying URL: ${url} with User-Agent: ${userAgent.substring(0, 20)}...`)
-
-        const response = await fetch(url, {
-          headers: {
-            "User-Agent": userAgent,
-            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            Connection: "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Cache-Control": "max-age=0",
-          },
-        })
-
-        responseStatus = response.status
-        responseUrl = response.url
-
-        console.log(`[${scraper.name}] Response status: ${responseStatus}, URL: ${responseUrl}`)
-
-        // Count 404 responses
-        if (responseStatus === 404) {
-          notFoundCount++
-          continue
-        }
-
-        if (!response.ok) continue
-
-        const html = await response.text()
-
-        // Check if the page is a 404 page
-        if (scraper.isNotFoundPage(html)) {
-          console.log(`[${scraper.name}] Found 404 page at ${url}`)
-          notFoundCount++
-          continue
-        }
-
-        // Log a portion of the HTML for debugging
-        console.log(`[${scraper.name}] HTML snippet from ${url} (${html.length} bytes):`, html.substring(0, 500))
-
-        // Extract product information using the scraper's method
-        const productInfo = scraper.extractProductInfo(html, barcode)
-        if (productInfo.name && productInfo.name !== `Product ${barcode}` && !productInfo.notFound) {
-          productData = productInfo
-          break
-        }
-      } catch (error) {
-        console.error(
-          `[${scraper.name}] Error fetching from ${url} with user agent ${userAgent.substring(0, 20)}:`,
-          error,
-        )
+    // Then try the regular image
+    else if (product.image_url) {
+      imageUrl = product.image_url
+    }
+    // Then try selected images
+    else if (product.selected_images?.front?.display?.url) {
+      imageUrl = product.selected_images.front.display.url
+    }
+    // Then try images object
+    else if (product.images && Object.keys(product.images).length > 0) {
+      // Get the first image key
+      const firstImageKey = Object.keys(product.images)[0]
+      if (product.images[firstImageKey].url) {
+        imageUrl = product.images[firstImageKey].url
       }
     }
 
-    if (productData) break
-  }
+    // If no image was found, use a placeholder
+    if (!imageUrl) {
+      imageUrl = "/placeholder.svg?height=200&width=200"
+    }
 
-  // If we got multiple 404 responses or detected 404 pages, the product is likely not available
-  if (notFoundCount >= 1 && !productData) {
-    console.log(`[${scraper.name}] Product not found: notFoundCount=${notFoundCount}`)
+    // Create a product object with the extracted information
+    return {
+      name,
+      image: imageUrl,
+      barcode,
+      quantity: product.quantity || undefined,
+      source: "Open Food Facts API",
+    }
+  } catch (error) {
+    console.error("Error fetching from Open Food Facts API:", error)
     return null
   }
-
-  return productData
 }
 
-// Array of all available scrapers
-const scrapers: WebsiteScraper[] = [aswakAssalamScraper]
+// Optimized function to fetch product info from all sources in parallel
+async function fetchProductInfoFromAllSources(barcode: string): Promise<ProductInfo | null> {
+  // Check cache first
+  const now = Date.now()
+  const cachedProduct = productCache[barcode]
+  if (cachedProduct && now - cachedProduct.timestamp < CACHE_TTL) {
+    console.log(`Using cached product info for barcode: ${barcode}`)
+    return cachedProduct.data
+  }
 
-// Make sure to export the GET function as a named export
+  // Start all fetches in parallel
+  const aswakPromise = fetchFromAswakAssalam(barcode)
+  const frenchOpenFoodFactsPromise = fetchFromFrenchOpenFoodFacts(barcode)
+  const openFoodFactsAPIPromise = fetchFromOpenFoodFactsAPI(barcode)
+
+  // Wait for Aswak Assalam result first (respecting priority)
+  let productInfo = await aswakPromise
+  if (productInfo) {
+    console.log("Found product info from Aswak Assalam")
+    // Cache the result
+    productCache[barcode] = { data: productInfo, timestamp: now }
+    return productInfo
+  }
+
+  // Then check French Open Food Facts
+  productInfo = await frenchOpenFoodFactsPromise
+  if (productInfo) {
+    console.log("Found product info from French Open Food Facts")
+    // Cache the result
+    productCache[barcode] = { data: productInfo, timestamp: now }
+    return productInfo
+  }
+
+  // Finally check Open Food Facts API
+  productInfo = await openFoodFactsAPIPromise
+  if (productInfo) {
+    console.log("Found product info from Open Food Facts API")
+    // Cache the result
+    productCache[barcode] = { data: productInfo, timestamp: now }
+    return productInfo
+  }
+
+  console.log("Product not found in any source")
+  return null
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const barcode = searchParams.get("barcode")
-  const websiteParam = searchParams.get("website") // Optional parameter to specify which website to use
 
   if (!barcode) {
     return NextResponse.json({ error: "Barcode is required" }, { status: 400 })
   }
 
   try {
-    let productData: ProductInfo | null = null
-    const allResults: ProductInfo[] = []
+    console.log(`API route: Fetching product info for barcode: ${barcode}`)
 
-    // If a specific website is requested, only try that one
-    if (websiteParam) {
-      const scraper = scrapers.find((s) => s.name.toLowerCase() === websiteParam.toLowerCase())
-      if (!scraper) {
-        return NextResponse.json(
-          {
-            error: "Invalid website parameter",
-            availableWebsites: scrapers.map((s) => s.name),
-          },
-          { status: 400 },
-        )
-      }
+    const productInfo = await fetchProductInfoFromAllSources(barcode)
 
-      productData = await fetchProductFromWebsite(scraper, barcode)
-      if (productData) {
-        allResults.push(productData)
-      }
-    } else {
-      // Try all scrapers in order
-      for (const scraper of scrapers) {
-        console.log(`Trying to fetch product from ${scraper.name}...`)
-        const result = await fetchProductFromWebsite(scraper, barcode)
-        if (result) {
-          allResults.push(result)
-          if (!productData) {
-            productData = result // Use the first successful result as the primary one
-          }
-        }
-      }
-
-      // If no product found in scrapers, try Open Food Facts API
-      if (!productData) {
-        console.log("No product found in scrapers, trying Open Food Facts API...")
-        const openFoodFactsResult = await fetchFromOpenFoodFacts(barcode)
-        if (openFoodFactsResult) {
-          allResults.push(openFoodFactsResult)
-          productData = openFoodFactsResult
-        }
-      }
+    if (productInfo) {
+      return NextResponse.json(productInfo)
     }
 
-    if (productData) {
-      console.log("API returning product with image URL:", productData.image)
-      return NextResponse.json({
-        ...productData,
-        barcode,
-        allResults: allResults.length > 1 ? allResults : undefined, // Include all results if we have more than one
-      })
-    }
-
-    // If we couldn't find the product on any website, return a clear message
+    // If no product info was found from any source
     return NextResponse.json(
       {
         error: "Product not found",
-        message: "This product is not available in any of our supported websites.",
-        notAvailable: true,
         barcode,
-        searchedWebsites: websiteParam ? [websiteParam] : [...scrapers.map((s) => s.name), "Open Food Facts"],
       },
       { status: 404 },
     )
   } catch (error) {
-    console.error("Error fetching product:", error)
-
-    return NextResponse.json({
-      error: "Failed to fetch product",
-      message: "Error connecting to product websites.",
-      mockData: true,
-      name: `Product ${barcode.substring(0, 4)}`,
-      price: (Math.random() * 100).toFixed(2),
-      image: "/placeholder.svg?height=200&width=200",
-      category: "Mock Category",
-      isInStock: true,
-      barcode,
-    })
+    console.error("Error in API route:", error)
+    return NextResponse.json(
+      {
+        error: "Failed to fetch product info",
+        message: error instanceof Error ? error.message : String(error),
+        barcode,
+      },
+      { status: 500 },
+    )
   }
 }
 
