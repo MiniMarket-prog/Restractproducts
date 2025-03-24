@@ -1,6 +1,18 @@
 import { supabase, isSupabaseInitialized } from "@/lib/supabase"
 import type { Product, Category, ProductFetchResult } from "@/types/product"
 
+// Renamed function to avoid naming conflicts
+function checkIfExpiringSoon(expiryDate: string, notificationDays: number): boolean {
+  if (!expiryDate) return false
+
+  const today = new Date()
+  const expiry = new Date(expiryDate)
+  const diffTime = expiry.getTime() - today.getTime()
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+
+  return diffDays <= notificationDays && diffDays >= 0
+}
+
 // Mock data for when Supabase is not available
 const mockCategories: Category[] = [
   { id: "1", name: "Beverages" },
@@ -25,6 +37,7 @@ const mockProducts: Record<string, Product> = {
   },
 }
 
+// Further improved fetchProductByBarcode function with better timeout handling
 export async function fetchProductByBarcode(barcode: string): Promise<Product | null> {
   if (!barcode) return null
 
@@ -33,214 +46,268 @@ export async function fetchProductByBarcode(barcode: string): Promise<Product | 
     return mockProducts[barcode] || null
   }
 
+  // Create an AbortController for timeout
+  const controller = new AbortController()
+  let timeoutId: NodeJS.Timeout | null = null
+
   try {
     console.log(`Fetching product with barcode: ${barcode}`)
 
-    // Use a more explicit query to ensure we get the category data
-    const { data, error } = await supabase
-      .from("products")
-      .select(`
-        *,
-        categories:category_id (
-          id,
-          name
-        )
-      `)
-      .eq("barcode", barcode)
-      .single()
+    // Set timeout to abort the request after 25 seconds
+    timeoutId = setTimeout(() => {
+      console.log(`Fetch timeout after 25s, aborting request for barcode ${barcode}`)
+      controller.abort("Timeout exceeded")
+    }, 25000) // Increased from 10000 to 25000 (25 seconds)
 
-    if (error) {
-      if (error.code === "PGRST116") {
-        // PGRST116 is the error code for "no rows returned"
+    try {
+      // First, get the product - don't use the signal here as it causes issues with Supabase
+      const { data: productData, error: productError } = await Promise.race([
+        supabase.from("products").select("*").eq("barcode", barcode).single(),
+        new Promise<never>((_, reject) => {
+          // This promise will reject if the controller aborts
+          controller.signal.addEventListener("abort", () => {
+            reject(new Error(`Timeout fetching product with barcode ${barcode}`))
+          })
+        }),
+      ])
+
+      // Clear the timeout since we got a response
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+        timeoutId = null
+      }
+
+      if (productError) {
+        if (productError.code === "PGRST116") {
+          // PGRST116 is the error code for "no rows returned"
+          console.log(`No product found with barcode: ${barcode}`)
+          return null
+        }
+        console.error("Error fetching product:", productError)
         return null
       }
-      console.error("Error fetching product:", error)
-      return null
-    }
 
-    if (data) {
+      if (!productData) {
+        console.log(`No product data returned for barcode: ${barcode}`)
+        return null
+      }
+
+      // If we have a category_id, fetch the category separately
+      let categoryData = null
+      if (productData.category_id) {
+        const { data: category, error: categoryError } = await supabase
+          .from("categories")
+          .select("*")
+          .eq("id", productData.category_id)
+          .single()
+
+        if (!categoryError && category) {
+          categoryData = category
+        }
+      }
+
       // Log the raw data to see what we're getting from Supabase
-      console.log("Raw product data from Supabase:", JSON.stringify(data, null, 2))
+      console.log("Raw product data from Supabase:", JSON.stringify(productData, null, 2))
 
       // Create a properly structured product object
-      const product: Product = {
-        ...data,
-        category: data.categories, // Assign the categories object directly
-        isLowStock: data.stock <= data.min_stock,
-        isExpiringSoon: data.expiry_date
-          ? isExpiringSoon(data.expiry_date, data.expiry_notification_days || 30)
+      const product = {
+        ...productData,
+        category: categoryData as Category | null,
+        isLowStock:
+          typeof productData.stock === "number" && typeof productData.min_stock === "number"
+            ? productData.stock <= productData.min_stock
+            : false,
+        isExpiringSoon: productData.expiry_date
+          ? checkIfExpiringSoon(
+              productData.expiry_date as string,
+              typeof productData.expiry_notification_days === "number" ? productData.expiry_notification_days : 30,
+            )
           : false,
-      }
+      } as Product
 
       // Log the processed product
       console.log("Processed product:", JSON.stringify(product, null, 2))
 
       return product
+    } catch (fetchError) {
+      // Clear the timeout in case of error
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+        timeoutId = null
+      }
+
+      // Check if it's an abort error
+      if (fetchError instanceof Error && (fetchError.name === "AbortError" || fetchError.message.includes("Timeout"))) {
+        console.error(`Fetch timeout for barcode ${barcode}`)
+        // Return null instead of throwing to prevent the app from getting stuck
+        return null
+      }
+
+      console.error("Error in fetchProductByBarcode inner try/catch:", fetchError)
+      // Return null instead of re-throwing to prevent the app from getting stuck
+      return null
+    }
+  } catch (err) {
+    // Clear the timeout in case of error in the outer try/catch
+    if (timeoutId) {
+      clearTimeout(timeoutId)
+      timeoutId = null
     }
 
-    return null
-  } catch (err) {
     console.error("Error in fetchProductByBarcode:", err)
+    // Return null instead of throwing to prevent the app from getting stuck
     return null
   }
 }
 
-// Update the saveProduct function to ensure image URLs are preserved
+// Add a new utility function for fetching with retry capability
+export async function fetchWithRetry(
+  url: string,
+  options: RequestInit = {},
+  maxRetries = 2,
+  timeout = 10000,
+): Promise<Response> {
+  let retries = 0
+
+  while (retries <= maxRetries) {
+    try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+      const fetchOptions = {
+        ...options,
+        signal: controller.signal,
+      }
+
+      console.log(`Fetching ${url} with timeout ${timeout}ms, retries left: ${maxRetries - retries}`)
+      const response = await fetch(url, fetchOptions)
+      clearTimeout(timeoutId)
+
+      return response
+    } catch (error) {
+      retries++
+
+      // If it's an abort error (timeout) or we've used all retries, throw the error
+      if ((error instanceof Error && error.name === "AbortError") || retries > maxRetries) {
+        console.error(`Fetch failed after ${retries} attempts:`, error)
+        throw error
+      }
+
+      // Wait before retrying (exponential backoff)
+      const delay = Math.min(1000 * Math.pow(2, retries), 5000)
+      console.log(`Retry ${retries}/${maxRetries} after ${delay}ms`)
+      await new Promise((resolve) => setTimeout(resolve, delay))
+    }
+  }
+
+  // This should never be reached due to the throw in the catch block
+  throw new Error(`Failed after ${maxRetries} retries`)
+}
+
+// Completely new approach to saveProduct function
 export async function saveProduct(product: Product): Promise<Product> {
-  if (!product.barcode) {
-    throw new Error("Barcode is required")
-  }
-
-  // Log the product being saved
-  console.log("Saving product with image URL:", product.image)
-
-  // Check if we're using a local category ID (starts with "local-")
-  if (product.category_id && product.category_id.startsWith("local-")) {
-    console.log("Using local category ID, setting category_id to null for database storage")
-    product.category_id = null // Set to null for database storage
-  }
-
-  if (!isSupabaseInitialized()) {
-    console.warn("Supabase client not available. Using mock data.")
-    const mockProduct = {
-      ...product,
-      id: product.id || Math.random().toString(36).substring(2, 9),
-      created_at: new Date().toISOString(),
-    }
-
-    // Update our mock data
-    if (product.barcode) {
-      mockProducts[product.barcode] = mockProduct
-    }
-
-    return mockProduct
-  }
-
   try {
-    // Check if product already exists
-    const existingProduct = await fetchProductByBarcode(product.barcode)
+    if (!isSupabaseInitialized()) {
+      console.log("Supabase not initialized, returning mock data")
+      return product
+    }
 
-    // Prepare the product data for insertion/update
-    // Make sure to remove any properties that aren't in the database schema
-    const productData = {
+    // Prepare the data for Supabase - only include fields that exist in the database schema
+    // Explicitly list all fields from the database schema to avoid any issues
+    const updateData = {
       name: product.name,
       price: product.price,
       barcode: product.barcode,
-      stock: product.stock || 0,
-      min_stock: product.min_stock || 0,
-      image: product.image, // Ensure image is included
-      category_id: product.category_id || null,
-      purchase_price: product.purchase_price || null,
-      expiry_date: product.expiry_date || null,
-      expiry_notification_days: product.expiry_notification_days || 30,
+      stock: product.stock,
+      min_stock: product.min_stock,
+      image: product.image,
+      category_id: product.category_id,
+      purchase_price: product.purchase_price,
+      expiry_date: product.expiry_date,
+      expiry_notification_days: product.expiry_notification_days,
+      updated_by: product.updated_by || "system",
+      updated_at: new Date().toISOString(),
     }
 
-    // Log the product data being saved
-    console.log("Saving product with data:", productData)
+    console.log("Saving product with strictly filtered data:", updateData)
 
-    if (existingProduct) {
-      // Update existing product
-      console.log("Updating existing product:", existingProduct.id)
-      const { data, error } = await supabase
-        .from("products")
-        .update(productData)
-        .eq("id", existingProduct.id)
-        .select()
+    // Use the most basic update operation possible
+    const { error: updateError } = await supabase.from("products").update(updateData).eq("id", product.id)
+
+    if (updateError) {
+      console.error("Error updating product with basic operation:", updateError)
+      throw new Error(`Failed to update product: ${updateError.message}`)
+    }
+
+    console.log("Product updated successfully, now fetching the updated product")
+
+    // Fetch the updated product with a basic select
+    const { data, error: fetchError } = await supabase
+      .from("products")
+      .select(
+        "id, name, price, barcode, stock, min_stock, image, category_id, created_at, purchase_price, expiry_date, expiry_notification_days, created_by, updated_by, updated_at",
+      )
+      .eq("id", product.id)
+      .single()
+
+    if (fetchError) {
+      console.error("Error fetching updated product:", fetchError)
+      throw new Error(`Failed to fetch updated product: ${fetchError.message}`)
+    }
+
+    if (!data) {
+      throw new Error("No data returned after updating product")
+    }
+
+    console.log("Product fetched successfully:", data)
+
+    // Fetch the category separately if needed
+    let categoryData = null
+    if (data.category_id) {
+      const { data: categoryResult, error: categoryError } = await supabase
+        .from("categories")
+        .select("id, name")
+        .eq("id", data.category_id)
         .single()
 
-      if (error) {
-        console.error("Error updating product:", error)
-        throw new Error(error.message)
+      if (!categoryError && categoryResult) {
+        categoryData = categoryResult
       }
-
-      console.log("Product updated successfully:", data)
-
-      // Fetch the category to include in the returned product
-      let category = null
-      if (data.category_id) {
-        const { data: categoryData, error: categoryError } = await supabase
-          .from("categories")
-          .select("*")
-          .eq("id", data.category_id)
-          .single()
-
-        if (categoryError) {
-          console.error("Error fetching category:", categoryError)
-        } else if (categoryData) {
-          category = categoryData
-        }
-      }
-
-      return {
-        ...data,
-        category: category,
-        isLowStock: data.stock <= data.min_stock,
-        isExpiringSoon: data.expiry_date
-          ? isExpiringSoon(data.expiry_date, data.expiry_notification_days || 30)
-          : false,
-      } as Product
-    } else {
-      // Insert new product
-      console.log("Inserting new product")
-
-      // Remove any empty id field to let Supabase generate it
-      if (product.id === "" || !product.id) {
-        delete product.id
-      }
-
-      const { data, error } = await supabase.from("products").insert(productData).select().single()
-
-      if (error) {
-        console.error("Error inserting product:", error)
-        throw new Error(error.message)
-      }
-
-      console.log("Product inserted successfully:", data)
-
-      // Fetch the category to include in the returned product
-      let category = null
-      if (data.category_id) {
-        const { data: categoryData, error: categoryError } = await supabase
-          .from("categories")
-          .select("*")
-          .eq("id", data.category_id)
-          .single()
-
-        if (categoryError) {
-          console.error("Error fetching category:", categoryError)
-        } else if (categoryData) {
-          category = categoryData
-        }
-      }
-
-      return {
-        ...data,
-        category: category,
-        isLowStock: data.stock <= data.min_stock,
-        isExpiringSoon: data.expiry_date
-          ? isExpiringSoon(data.expiry_date, data.expiry_notification_days || 30)
-          : false,
-      } as Product
     }
-  } catch (err) {
-    console.error("Error in saveProduct:", err)
-    // Return a mock saved product
-    return {
-      ...product,
-      id: product.id || Math.random().toString(36).substring(2, 9),
-      created_at: new Date().toISOString(),
-    }
+
+    // Transform the data to match our Product interface
+    const savedProduct = {
+      ...data,
+      category: categoryData,
+      isLowStock:
+        typeof data.stock === "number" && typeof data.min_stock === "number" ? data.stock <= data.min_stock : false,
+      isExpiringSoon: data.expiry_date
+        ? checkIfExpiringSoon(data.expiry_date, data.expiry_notification_days || 30)
+        : false,
+    } as Product
+
+    return savedProduct
+  } catch (error) {
+    console.error("Error in saveProduct:", error)
+    throw error
   }
 }
 
-export async function updateProductStock(id: string, newStock: number): Promise<void> {
+export async function updateProductStock(id: string, newStock: number, userId?: string): Promise<void> {
   if (!isSupabaseInitialized()) {
     console.warn("Supabase client not available. Stock update simulated.")
     return
   }
 
   try {
-    const { error } = await supabase.from("products").update({ stock: newStock }).eq("id", id)
+    const { error } = await supabase
+      .from("products")
+      .update({
+        stock: newStock,
+        updated_by: userId || "anonymous",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id)
 
     if (error) {
       console.error("Error updating stock:", error)
@@ -272,7 +339,7 @@ export async function fetchProductInfoFromWeb(barcode: string): Promise<ProductF
     const data = await response.json()
 
     // Format the price to ensure it's displayed correctly
-    const formattedPrice = data.price.replace(",", ".") // Replace comma with dot for decimal
+    const formattedPrice = data.price ? data.price.replace(",", ".") : "0.00" // Replace comma with dot for decimal
 
     return {
       name: data.name,
@@ -280,6 +347,7 @@ export async function fetchProductInfoFromWeb(barcode: string): Promise<ProductF
       image: data.image,
       description: `Category: ${data.category || "Unknown"}, In Stock: ${data.isInStock ? "Yes" : "No"}`,
       category: data.category,
+      isInStock: Boolean(data.isInStock), // Fix: Use Boolean constructor to ensure it's a boolean
     }
   } catch (error) {
     console.error("Error fetching product info from web:", error)
@@ -287,13 +355,60 @@ export async function fetchProductInfoFromWeb(barcode: string): Promise<ProductF
   }
 }
 
-// Helper function to check if a product is expiring soon
-function isExpiringSoon(expiryDateStr: string, notificationDays: number): boolean {
-  const expiryDate = new Date(expiryDateStr)
-  const today = new Date()
-  const diffTime = expiryDate.getTime() - today.getTime()
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+// Function to get all products
+export async function getAllProducts(): Promise<Product[]> {
+  if (!isSupabaseInitialized()) {
+    console.warn("Supabase client not available. Using mock data.")
+    return Object.values(mockProducts)
+  }
 
-  return diffDays <= notificationDays && diffDays >= 0
+  try {
+    // Fixed: Don't try to join with categories directly
+    const { data, error } = await supabase.from("products").select("*").order("name")
+
+    if (error) {
+      console.error("Error fetching products:", error)
+      return []
+    }
+
+    // Fetch all categories to use for mapping
+    const { data: categoriesData, error: categoriesError } = await supabase.from("categories").select("*")
+
+    if (categoriesError) {
+      console.error("Error fetching categories:", categoriesError)
+    }
+
+    // Create a map of category IDs to category objects for quick lookup
+    const categoriesMap = new Map<string, Category>()
+    if (categoriesData) {
+      categoriesData.forEach((category: Category) => {
+        if (category.id) {
+          categoriesMap.set(category.id, category)
+        }
+      })
+    }
+
+    // Process the products to add computed properties
+    return data.map((product: any) => {
+      const stock = typeof product.stock === "number" ? product.stock : 0
+      const min_stock = typeof product.min_stock === "number" ? product.min_stock : 0
+      const expiry_date = product.expiry_date ? String(product.expiry_date) : null
+      const expiry_notification_days =
+        typeof product.expiry_notification_days === "number" ? product.expiry_notification_days : 30
+
+      // Look up the category from our map
+      const category = product.category_id ? categoriesMap.get(product.category_id) || null : null
+
+      return {
+        ...product,
+        category,
+        isLowStock: stock <= min_stock,
+        isExpiringSoon: expiry_date ? checkIfExpiringSoon(expiry_date, expiry_notification_days) : false,
+      } as Product
+    })
+  } catch (error) {
+    console.error("Error in getAllProducts:", error)
+    return []
+  }
 }
 
