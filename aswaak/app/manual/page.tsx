@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation"
 import { ManualEntry } from "@/components/manual-entry"
 import { ProductDisplay } from "@/components/product-display"
 import { ProductForm } from "@/components/product-form"
+import { BatchBarcodeProcessor } from "@/components/batch-barcode-processor"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertCircle, Info, Loader2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
@@ -21,6 +22,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 export default function ManualPage() {
   const [currentProduct, setCurrentProduct] = useState<Product | null>(null)
@@ -31,6 +33,7 @@ export default function ManualPage() {
   const [categories, setCategories] = useState<any[]>([])
   const [currentBarcode, setCurrentBarcode] = useState<string>("")
   const [productNotAvailable, setProductNotAvailable] = useState(false)
+  const [activeTab, setActiveTab] = useState("single")
   // Add state for existing product dialog
   const [existingProduct, setExistingProduct] = useState<Product | null>(null)
   const [showExistingProductDialog, setShowExistingProductDialog] = useState(false)
@@ -68,101 +71,107 @@ export default function ManualPage() {
       setShowForm(false)
 
       // First, check if the product exists in our database
-      const dbProduct = await fetchProductByBarcode(barcode)
+      try {
+        const dbProduct = await fetchProductByBarcode(barcode)
 
-      if (dbProduct) {
-        // Product found in database - show the existing product dialog
-        setExistingProduct(dbProduct)
-        setShowExistingProductDialog(true)
-      } else {
-        // Product not found in database, try to fetch from web
+        if (dbProduct) {
+          // Product found in database - show the existing product dialog
+          setExistingProduct(dbProduct)
+          setShowExistingProductDialog(true)
+          return
+        }
+      } catch (dbError) {
+        console.error("Error checking database for product:", dbError)
+        // Continue with web lookup even if database check fails
+      }
+
+      // Product not found in database, try to fetch from web
+      try {
+        const response = await fetch(`/api/fetch-product?barcode=${barcode}`)
+
+        let data
         try {
-          const response = await fetch(`/api/fetch-product?barcode=${barcode}`)
+          data = await response.json()
+        } catch (parseError) {
+          throw new Error("Invalid API response format")
+        }
 
-          let data
-          try {
-            data = await response.json()
-          } catch (parseError) {
-            throw new Error("Invalid API response format")
-          }
-
-          // Handle 404 response specifically
-          if (response.status === 404 || data.notAvailable) {
-            setProductNotAvailable(true)
-            setError(`Product with barcode ${barcode} is not available in Aswak Assalam`)
-            toast({
-              title: "Product Not Available",
-              description: "This product is not available in Aswak Assalam.",
-              variant: "destructive",
-            })
-
-            // Still show the form to allow manual entry
-            setShowForm(true)
-            setWebProductInfo(null)
-            return
-          }
-
-          if (!response.ok) {
-            throw new Error(`API error: ${data.message || "Unknown error"}`)
-          }
-
-          // Format the price to ensure it's displayed correctly
-          if (data.price) {
-            data.price = data.price.replace(",", ".")
-          }
-
-          // Try to match the category from the web with our database categories
-          let category_id = null
-          if (data.category && categories.length > 0) {
-            const matchingCategory = categories.find(
-              (cat) =>
-                cat.name.toLowerCase() === data.category.toLowerCase() ||
-                data.category.toLowerCase().includes(cat.name.toLowerCase()),
-            )
-            if (matchingCategory) category_id = matchingCategory.id
-          }
-
-          // Set the web product info - Make sure to preserve the image URL exactly as received
-          setWebProductInfo({
-            name: data.name,
-            // ALWAYS use the default selling price from settings
-            price: settings.inventory.defaultSellingPrice,
-            image: data.image, // Preserve the image URL exactly as received
-            description: `Category: ${data.category || "Unknown"}, In Stock: ${data.isInStock ? "Yes" : "No"}`,
-            category: data.category,
-            // Only use the matched category if it exists, otherwise use default
-            category_id: category_id || settings.inventory.defaultCategoryId,
-            quantity: data.quantity || null,
-            // Add default purchase price from settings
-            purchase_price: settings.inventory.defaultPurchasePrice,
+        // Handle 404 response specifically
+        if (response.status === 404 || data.notAvailable || data.error === "Product not found") {
+          setProductNotAvailable(true)
+          setError(`Product with barcode ${barcode} is not available in Aswak Assalam`)
+          toast({
+            title: "Product Not Available",
+            description: "This product is not available in Aswak Assalam.",
+            variant: "destructive",
           })
-
-          console.log("Web product info with image:", data.image) // Add this debug log
-
-          setCurrentProduct(null)
-          setShowForm(true)
-        } catch (err) {
-          console.error("Error fetching product from web:", err)
-
-          // Check if this is a 404 error
-          if (err instanceof Error && err.message.includes("404")) {
-            setProductNotAvailable(true)
-            setError(`Product with barcode ${barcode} is not available in Aswak Assalam`)
-            toast({
-              title: "Product Not Available",
-              description: "This product is not available in Aswak Assalam.",
-              variant: "destructive",
-            })
-          } else {
-            setError(`Error: ${err instanceof Error ? err.message : String(err)}`)
-          }
-
-          setCurrentProduct(null)
-          setWebProductInfo(null)
 
           // Still show the form to allow manual entry
           setShowForm(true)
+          setWebProductInfo(null)
+          return
         }
+
+        if (!response.ok) {
+          throw new Error(`API error: ${data.message || "Unknown error"}`)
+        }
+
+        // Format the price to ensure it's displayed correctly
+        if (data.price) {
+          data.price = data.price.replace(",", ".")
+        }
+
+        // Try to match the category from the web with our database categories
+        let category_id = null
+        if (data.category && categories.length > 0) {
+          const matchingCategory = categories.find(
+            (cat) =>
+              cat.name.toLowerCase() === data.category.toLowerCase() ||
+              data.category.toLowerCase().includes(cat.name.toLowerCase()),
+          )
+          if (matchingCategory) category_id = matchingCategory.id
+        }
+
+        // Set the web product info - Make sure to preserve the image URL exactly as received
+        setWebProductInfo({
+          name: data.name,
+          // ALWAYS use the default selling price from settings
+          price: settings?.inventory?.defaultSellingPrice || "",
+          image: data.image, // Preserve the image URL exactly as received
+          description: `Category: ${data.category || "Unknown"}, In Stock: ${data.isInStock ? "Yes" : "No"}`,
+          category: data.category,
+          // Only use the matched category if it exists, otherwise use default
+          category_id: category_id || settings?.inventory?.defaultCategoryId || "",
+          quantity: data.quantity || null,
+          // Add default purchase price from settings
+          purchase_price: settings?.inventory?.defaultPurchasePrice || "",
+        })
+
+        console.log("Web product info with image:", data.image) // Add this debug log
+
+        setCurrentProduct(null)
+        setShowForm(true)
+      } catch (err) {
+        console.error("Error fetching product from web:", err)
+
+        // Check if this is a 404 error
+        if (err instanceof Error && err.message.includes("404")) {
+          setProductNotAvailable(true)
+          setError(`Product with barcode ${barcode} is not available in Aswak Assalam`)
+          toast({
+            title: "Product Not Available",
+            description: "This product is not available in Aswak Assalam.",
+            variant: "destructive",
+          })
+        } else {
+          setError(`Error: ${err instanceof Error ? err.message : String(err)}`)
+        }
+
+        setCurrentProduct(null)
+        setWebProductInfo(null)
+
+        // Still show the form to allow manual entry
+        setShowForm(true)
       }
     } catch (err) {
       setError(`Error: ${err instanceof Error ? err.message : String(err)}`)
@@ -271,62 +280,87 @@ export default function ManualPage() {
     }
   }
 
+  // Handle batch processing completion
+  const handleBatchProcessComplete = (results: any[]) => {
+    toast({
+      title: "Batch Processing Complete",
+      description: `Processed ${results.length} barcodes. Found: ${results.filter((r) => r.success).length}`,
+    })
+  }
+
   return (
     <main className="flex min-h-screen flex-col items-center p-4">
       <div className="w-full max-w-md">
-        <h1 className="text-2xl font-bold mb-4">Manual Entry</h1>
+        <h1 className="text-2xl font-bold mb-4">Product Entry</h1>
 
-        {isLoading && searchParams.get("barcode") ? (
-          <div className="flex justify-center items-center p-8">
-            <div className="flex flex-col items-center gap-2">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              <p>Searching for barcode {searchParams.get("barcode")}...</p>
-            </div>
-          </div>
-        ) : (
-          <ManualEntry onSubmit={handleBarcodeDetected} isLoading={isLoading} />
-        )}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-6">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="single">Single Barcode</TabsTrigger>
+            <TabsTrigger value="batch">Batch Processing</TabsTrigger>
+          </TabsList>
 
-        {error && (
-          <Alert variant={productNotAvailable ? "default" : "destructive"} className="mb-4">
-            {productNotAvailable ? <Info className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
-            <AlertTitle>{productNotAvailable ? "Product Not Available" : "Error"}</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
+          <TabsContent value="single">
+            {isLoading && searchParams.get("barcode") ? (
+              <div className="flex justify-center items-center p-8">
+                <div className="flex flex-col items-center gap-2">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  <p>Searching for barcode {searchParams.get("barcode")}...</p>
+                </div>
+              </div>
+            ) : (
+              <ManualEntry onSubmit={handleBarcodeDetected} isLoading={isLoading} />
+            )}
 
-        {showForm && (
-          <ProductForm
-            initialData={{
-              ...currentProduct, // Add this to include all existing product data
-              name: currentProduct?.name || webProductInfo?.name || "",
-              price: currentProduct?.price || webProductInfo?.price || settings.inventory.defaultSellingPrice || "",
-              barcode: currentProduct?.barcode || currentBarcode,
-              stock: currentProduct?.stock || settings?.inventory?.defaultStock || 0,
-              min_stock: currentProduct?.min_stock || settings?.inventory?.defaultMinStock || 0,
-              image: currentProduct?.image || webProductInfo?.image || "",
-              purchase_price:
-                currentProduct?.purchase_price ||
-                webProductInfo?.purchase_price ||
-                settings.inventory.defaultPurchasePrice ||
-                "",
-              quantity: currentProduct?.quantity || webProductInfo?.quantity || null,
-              category_id:
-                currentProduct?.category_id ||
-                webProductInfo?.category_id ||
-                settings.inventory.defaultCategoryId ||
-                "",
-              expiry_notification_days: currentProduct?.expiry_notification_days || 30,
-            }}
-            categories={categories}
-            onCancel={handleFormCancel}
-            onSuccess={handleFormSuccess}
-            isLoading={isLoading}
-          />
-        )}
+            {error && (
+              <Alert variant={productNotAvailable ? "default" : "destructive"} className="mb-4">
+                {productNotAvailable ? <Info className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+                <AlertTitle>{productNotAvailable ? "Product Not Available" : "Error"}</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
 
-        {currentProduct && !showForm && <ProductDisplay product={currentProduct} onEdit={() => setShowForm(true)} />}
+            {showForm && (
+              <ProductForm
+                initialData={{
+                  ...currentProduct, // Add this to include all existing product data
+                  name: currentProduct?.name || webProductInfo?.name || "",
+                  price:
+                    currentProduct?.price || webProductInfo?.price || settings?.inventory?.defaultSellingPrice || "",
+                  barcode: currentProduct?.barcode || currentBarcode,
+                  stock: currentProduct?.stock || settings?.inventory?.defaultStock || 0,
+                  min_stock: currentProduct?.min_stock || settings?.inventory?.defaultMinStock || 0,
+                  image: currentProduct?.image || webProductInfo?.image || "",
+                  purchase_price:
+                    currentProduct?.purchase_price ||
+                    webProductInfo?.purchase_price ||
+                    settings?.inventory?.defaultPurchasePrice ||
+                    "",
+                  quantity: currentProduct?.quantity || webProductInfo?.quantity || null,
+                  category_id:
+                    currentProduct?.category_id ||
+                    webProductInfo?.category_id ||
+                    settings?.inventory?.defaultCategoryId ||
+                    "",
+                  expiry_notification_days: currentProduct?.expiry_notification_days || 30,
+                }}
+                categories={categories}
+                onCancel={handleFormCancel}
+                onSuccess={handleFormSuccess}
+                isLoading={isLoading}
+              />
+            )}
+
+            {currentProduct && !showForm && (
+              <ProductDisplay product={currentProduct} onEdit={() => setShowForm(true)} />
+            )}
+          </TabsContent>
+
+          <TabsContent value="batch">
+            <BatchBarcodeProcessor onProcessComplete={handleBatchProcessComplete} />
+          </TabsContent>
+        </Tabs>
       </div>
+
       {/* Existing Product Dialog */}
       <Dialog open={showExistingProductDialog} onOpenChange={setShowExistingProductDialog}>
         <DialogContent>
