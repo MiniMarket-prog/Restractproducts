@@ -5,9 +5,10 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
-import { Loader2, XCircle, Trash2, Save } from "lucide-react"
+import { Loader2, XCircle, Trash2, Save, AlertTriangle } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import type { Product } from "@/types/product"
 import { useToast } from "@/hooks/use-toast"
 import { supabase, isSupabaseInitialized } from "@/lib/supabase"
@@ -40,6 +41,7 @@ export function BatchBarcodeProcessor({ onProcessComplete }: BatchProcessorProps
   const [currentBarcode, setCurrentBarcode] = useState<string | null>(null)
   const [processedCount, setProcessedCount] = useState(0)
   const [totalBarcodes, setTotalBarcodes] = useState(0)
+  const [usingClientSideFallback, setUsingClientSideFallback] = useState(false)
   const { toast } = useToast()
 
   // Update progress when processedCount changes
@@ -73,6 +75,104 @@ export function BatchBarcodeProcessor({ onProcessComplete }: BatchProcessorProps
       .filter((code) => code.length > 0)
   }
 
+  // Client-side fallback for processing barcodes
+  const processBarcodesClientSide = async (barcodes: string[]) => {
+    setUsingClientSideFallback(true)
+    const allResults: ProcessingResult[] = []
+
+    // Process one barcode at a time
+    for (let i = 0; i < barcodes.length; i++) {
+      const barcode = barcodes[i]
+      setCurrentBarcode(barcode)
+
+      try {
+        // Try Open Food Facts API directly from the client
+        const result = await fetchFromOpenFoodFactsClientSide(barcode)
+        allResults.push(result)
+      } catch (error) {
+        console.error(`Error processing barcode ${barcode} client-side:`, error)
+        allResults.push({
+          barcode,
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error occurred",
+        })
+      }
+
+      // Update processed count
+      setProcessedCount(i + 1)
+    }
+
+    return allResults
+  }
+
+  // Client-side function to fetch from Open Food Facts API
+  const fetchFromOpenFoodFactsClientSide = async (barcode: string): Promise<ProcessingResult> => {
+    try {
+      const response = await fetch(`https://world.openfoodfacts.org/api/v2/product/${barcode}.json`)
+
+      if (!response.ok) {
+        return {
+          barcode,
+          success: false,
+          error: `API returned status ${response.status}`,
+        }
+      }
+
+      const data = await response.json()
+
+      if (data.status !== 1 || !data.product) {
+        return {
+          barcode,
+          success: false,
+          error: "Product not found in Open Food Facts",
+        }
+      }
+
+      // Extract product information
+      const product = data.product
+
+      // Get product name
+      let name = product.product_name || product.generic_name || `Product ${barcode}`
+
+      // Add brand to the name if available
+      if (product.brands && !name.includes(product.brands)) {
+        name = `${name} - ${product.brands}`
+      }
+
+      // Get image URL
+      let imageUrl = product.image_front_url || product.image_url || ""
+
+      if (!imageUrl && product.selected_images?.front?.display?.url) {
+        imageUrl = product.selected_images.front.display.url
+      }
+
+      // Create product object
+      const productInfo: Product = {
+        name,
+        barcode,
+        image: imageUrl,
+        price: "",
+        stock: 0,
+        min_stock: 0,
+        data_source: "Open Food Facts API (Client-side)",
+      }
+
+      return {
+        barcode,
+        success: true,
+        product: productInfo,
+        selected: true,
+      }
+    } catch (error) {
+      console.error(`Error fetching from Open Food Facts API for ${barcode}:`, error)
+      return {
+        barcode,
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error occurred",
+      }
+    }
+  }
+
   // Process the barcodes
   const processBarcodes = async () => {
     const barcodes = parseBarcodes(barcodeText)
@@ -84,6 +184,8 @@ export function BatchBarcodeProcessor({ onProcessComplete }: BatchProcessorProps
     setProgress(0)
     setProcessedCount(0)
     setTotalBarcodes(barcodes.length)
+    setUsingClientSideFallback(false)
+    setCurrentBarcode(null)
 
     try {
       // Get enabled sources
@@ -106,103 +208,124 @@ export function BatchBarcodeProcessor({ onProcessComplete }: BatchProcessorProps
       }, 100)
 
       try {
-        // Process in smaller batches to avoid timeouts
-        const BATCH_SIZE = 10 // Process 10 barcodes at a time
-        const allResults: ProcessingResult[] = []
+        // First try with a very small batch to test if the server is responsive
+        const testBatch = barcodes.slice(0, 2)
+        let serverIsResponsive = true
 
-        for (let i = 0; i < barcodes.length; i += BATCH_SIZE) {
-          const batchBarcodes = barcodes.slice(i, i + BATCH_SIZE)
-          console.log(`Processing batch ${Math.floor(i / BATCH_SIZE) + 1} with ${batchBarcodes.length} barcodes`)
+        try {
+          const testResponse = await fetch("/api/batch-process", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              barcodes: testBatch,
+              sources: enabledSources,
+            }),
+            signal: AbortSignal.timeout(15000), // 15 second timeout for test
+          })
 
-          try {
-            // Use the server-side batch processing API
-            const response = await fetch("/api/batch-process", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                barcodes: batchBarcodes,
-                sources: enabledSources,
-              }),
-              // Add a timeout to the fetch request
-              signal: AbortSignal.timeout(30000), // 30 second timeout
-            })
+          if (!testResponse.ok) {
+            console.warn("Server test request failed, switching to client-side processing")
+            serverIsResponsive = false
+          }
+        } catch (error) {
+          console.warn("Server test request failed with error, switching to client-side processing:", error)
+          serverIsResponsive = false
+        }
 
-            if (!response.ok) {
-              const errorText = await response.text()
-              console.error(`Server responded with ${response.status}:`, errorText)
+        let allResults: ProcessingResult[] = []
 
-              // If it's a timeout, continue with the next batch
-              if (response.status === 504) {
-                console.warn(`Timeout processing batch ${Math.floor(i / BATCH_SIZE) + 1}, continuing with next batch`)
+        // If server is not responsive, use client-side processing for all barcodes
+        if (!serverIsResponsive) {
+          toast({
+            title: "Server Timeout",
+            description: "Using client-side processing as a fallback. Only Open Food Facts API will be available.",
+            variant: "default", // Changed from "warning" to "default"
+          })
 
-                // Add error results for this batch
-                const errorResults: ProcessingResult[] = batchBarcodes.map((barcode) => ({
-                  barcode,
-                  success: false,
-                  error: "Server timeout - processing took too long",
-                }))
+          allResults = await processBarcodesClientSide(barcodes)
+        } else {
+          // Process in smaller batches to avoid timeouts
+          const BATCH_SIZE = 5 // Process 5 barcodes at a time
 
-                allResults.push(...errorResults)
+          for (let i = 0; i < barcodes.length; i += BATCH_SIZE) {
+            const batchBarcodes = barcodes.slice(i, i + BATCH_SIZE)
+            console.log(`Processing batch ${Math.floor(i / BATCH_SIZE) + 1} with ${batchBarcodes.length} barcodes`)
+
+            try {
+              // Use the server-side batch processing API
+              const response = await fetch("/api/batch-process", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  barcodes: batchBarcodes,
+                  sources: enabledSources,
+                }),
+                signal: AbortSignal.timeout(20000), // 20 second timeout
+              })
+
+              if (!response.ok) {
+                // If server fails, process this batch client-side
+                console.warn(`Server responded with ${response.status}, processing batch client-side`)
+
+                // Process this batch client-side
+                const clientResults = await processBarcodesClientSide(batchBarcodes)
+                allResults.push(...clientResults)
                 continue
-              } else {
-                throw new Error(`Server responded with ${response.status}: ${errorText}`)
               }
-            }
 
-            const data = await response.json()
-            console.log(`Batch ${Math.floor(i / BATCH_SIZE) + 1} response:`, data)
+              const data = await response.json()
+              console.log(`Batch ${Math.floor(i / BATCH_SIZE) + 1} response:`, data)
 
-            // Convert API results to our format
-            const processedResults: ProcessingResult[] = data.results.map((result: any) => {
-              if (result.success) {
-                // Create a product object from the API response
-                const product: Product = {
-                  name: result.data.name,
-                  barcode: result.barcode,
-                  image: result.data.image,
-                  price: result.data.price || "",
-                  stock: 0, // Default stock
-                  min_stock: 0, // Default min stock
-                  data_source: result.data.source,
-                }
+              // Convert API results to our format
+              const processedResults: ProcessingResult[] = data.results.map((result: any) => {
+                if (result.success) {
+                  // Create a product object from the API response
+                  const product: Product = {
+                    name: result.data.name,
+                    barcode: result.barcode,
+                    image: result.data.image,
+                    price: result.data.price || "",
+                    stock: 0, // Default stock
+                    min_stock: 0, // Default min stock
+                    data_source: result.data.source,
+                  }
 
-                return {
-                  barcode: result.barcode,
-                  success: true,
-                  product,
-                  selected: true, // Default to selected
+                  return {
+                    barcode: result.barcode,
+                    success: true,
+                    product,
+                    selected: true, // Default to selected
+                  }
+                } else {
+                  return {
+                    barcode: result.barcode,
+                    success: false,
+                    error: result.error || "Product not found",
+                  }
                 }
-              } else {
-                return {
-                  barcode: result.barcode,
-                  success: false,
-                  error: result.error || "Product not found",
-                }
+              })
+
+              allResults.push(...processedResults)
+
+              // Update processed count
+              setProcessedCount(Math.min(i + BATCH_SIZE, barcodes.length))
+
+              // Add a small delay between batches
+              if (i + BATCH_SIZE < barcodes.length) {
+                await new Promise((resolve) => setTimeout(resolve, 500))
               }
-            })
+            } catch (error) {
+              console.error(`Error processing batch ${Math.floor(i / BATCH_SIZE) + 1}:`, error)
 
-            allResults.push(...processedResults)
-
-            // Update processed count
-            setProcessedCount(Math.min(i + BATCH_SIZE, barcodes.length))
-
-            // Add a small delay between batches to avoid overloading the server
-            if (i + BATCH_SIZE < barcodes.length) {
-              await new Promise((resolve) => setTimeout(resolve, 1000))
+              // If server request fails, process this batch client-side
+              console.warn("Server request failed, processing batch client-side")
+              const clientResults = await processBarcodesClientSide(batchBarcodes)
+              allResults.push(...clientResults)
             }
-          } catch (error) {
-            console.error(`Error processing batch ${Math.floor(i / BATCH_SIZE) + 1}:`, error)
-
-            // Add error results for this batch
-            const errorResults: ProcessingResult[] = batchBarcodes.map((barcode) => ({
-              barcode,
-              success: false,
-              error: error instanceof Error ? error.message : "Unknown error occurred",
-            }))
-
-            allResults.push(...errorResults)
           }
         }
 
@@ -421,6 +544,15 @@ export function BatchBarcodeProcessor({ onProcessComplete }: BatchProcessorProps
           </div>
         </div>
 
+        {usingClientSideFallback && (
+          <Alert variant="default" className="bg-amber-50 border-amber-200">
+            <AlertTriangle className="h-4 w-4 text-amber-600" />
+            <AlertDescription className="text-amber-700">
+              Using client-side processing due to server timeout. Only Open Food Facts API is available in this mode.
+            </AlertDescription>
+          </Alert>
+        )}
+
         {(isProcessing || isSaving) && (
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -430,6 +562,7 @@ export function BatchBarcodeProcessor({ onProcessComplete }: BatchProcessorProps
             <Progress value={progress} className="h-2" />
             <div className="text-center text-sm text-muted-foreground">
               {processedCount} of {totalBarcodes} {isProcessing ? "processed" : "saved"}
+              {currentBarcode && <div className="mt-1">Current: {currentBarcode}</div>}
             </div>
           </div>
         )}
