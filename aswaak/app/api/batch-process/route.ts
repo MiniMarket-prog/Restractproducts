@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server"
 import { fetchProductInfoFromSource } from "../fetch-product/route"
 
-// Add more detailed logging to the POST function
+// Update the POST function to handle smaller batches more efficiently
+
 export async function POST(request: Request) {
   try {
     const { barcodes, sources } = await request.json()
@@ -15,13 +16,13 @@ export async function POST(request: Request) {
     const validSources = sources || ["aswak1", "aswak2", "openfoodfacts"]
     console.log("Using sources:", validSources)
 
-    // Limit the number of barcodes to process
-    const MAX_BARCODES = 100
+    // Limit the number of barcodes to process per request to avoid timeouts
+    const MAX_BARCODES = 10
     const barcodesToProcess = barcodes.slice(0, MAX_BARCODES)
     console.log(`Processing ${barcodesToProcess.length} barcodes (limited to ${MAX_BARCODES})`)
 
-    // Process barcodes in parallel with a concurrency limit
-    const CONCURRENCY_LIMIT = 5
+    // Process barcodes in parallel with a lower concurrency limit
+    const CONCURRENCY_LIMIT = 3
     const results = []
 
     for (let i = 0; i < barcodesToProcess.length; i += CONCURRENCY_LIMIT) {
@@ -73,7 +74,7 @@ export async function POST(request: Request) {
       // Add a small delay between batches to avoid rate limiting
       if (i + CONCURRENCY_LIMIT < barcodesToProcess.length) {
         console.log("Adding delay between batches")
-        await new Promise((resolve) => setTimeout(resolve, 1000))
+        await new Promise((resolve) => setTimeout(resolve, 500))
       }
     }
 

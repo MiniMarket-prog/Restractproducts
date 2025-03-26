@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
@@ -38,7 +38,17 @@ export function BatchBarcodeProcessor({ onProcessComplete }: BatchProcessorProps
   const [results, setResults] = useState<ProcessingResult[]>([])
   const [progress, setProgress] = useState(0)
   const [currentBarcode, setCurrentBarcode] = useState<string | null>(null)
+  const [processedCount, setProcessedCount] = useState(0)
+  const [totalBarcodes, setTotalBarcodes] = useState(0)
   const { toast } = useToast()
+
+  // Update progress when processedCount changes
+  useEffect(() => {
+    if (totalBarcodes > 0) {
+      const calculatedProgress = Math.round((processedCount / totalBarcodes) * 100)
+      setProgress(calculatedProgress)
+    }
+  }, [processedCount, totalBarcodes])
 
   // Source options
   const [sources, setSources] = useState<SourceOption[]>([
@@ -72,6 +82,8 @@ export function BatchBarcodeProcessor({ onProcessComplete }: BatchProcessorProps
     setIsProcessing(true)
     setResults([])
     setProgress(0)
+    setProcessedCount(0)
+    setTotalBarcodes(barcodes.length)
 
     try {
       // Get enabled sources
@@ -83,62 +95,128 @@ export function BatchBarcodeProcessor({ onProcessComplete }: BatchProcessorProps
 
       console.log(`Processing ${barcodes.length} barcodes with sources:`, enabledSources)
 
-      // Use the server-side batch processing API
-      const response = await fetch("/api/batch-process", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          barcodes,
-          sources: enabledSources,
-        }),
-      })
+      // Start progress animation immediately
+      let progressValue = 0
+      const progressInterval = setInterval(() => {
+        progressValue += 1
+        // Cap at 90% until we get actual results
+        if (progressValue <= 90) {
+          setProgress(progressValue)
+        }
+      }, 100)
 
-      if (!response.ok) {
-        const errorText = await response.text()
-        console.error(`Server responded with ${response.status}:`, errorText)
-        throw new Error(`Server responded with ${response.status}: ${errorText}`)
-      }
+      try {
+        // Process in smaller batches to avoid timeouts
+        const BATCH_SIZE = 10 // Process 10 barcodes at a time
+        const allResults: ProcessingResult[] = []
 
-      const data = await response.json()
-      console.log("Batch processing response:", data)
+        for (let i = 0; i < barcodes.length; i += BATCH_SIZE) {
+          const batchBarcodes = barcodes.slice(i, i + BATCH_SIZE)
+          console.log(`Processing batch ${Math.floor(i / BATCH_SIZE) + 1} with ${batchBarcodes.length} barcodes`)
 
-      // Convert API results to our format
-      const processedResults: ProcessingResult[] = data.results.map((result: any) => {
-        if (result.success) {
-          // Create a product object from the API response
-          const product: Product = {
-            name: result.data.name,
-            barcode: result.barcode,
-            image: result.data.image,
-            price: result.data.price || "",
-            stock: 0, // Default stock
-            min_stock: 0, // Default min stock
-            data_source: result.data.source,
-          }
+          try {
+            // Use the server-side batch processing API
+            const response = await fetch("/api/batch-process", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                barcodes: batchBarcodes,
+                sources: enabledSources,
+              }),
+              // Add a timeout to the fetch request
+              signal: AbortSignal.timeout(30000), // 30 second timeout
+            })
 
-          return {
-            barcode: result.barcode,
-            success: true,
-            product,
-            selected: true, // Default to selected
-          }
-        } else {
-          return {
-            barcode: result.barcode,
-            success: false,
-            error: result.error || "Product not found",
+            if (!response.ok) {
+              const errorText = await response.text()
+              console.error(`Server responded with ${response.status}:`, errorText)
+
+              // If it's a timeout, continue with the next batch
+              if (response.status === 504) {
+                console.warn(`Timeout processing batch ${Math.floor(i / BATCH_SIZE) + 1}, continuing with next batch`)
+
+                // Add error results for this batch
+                const errorResults: ProcessingResult[] = batchBarcodes.map((barcode) => ({
+                  barcode,
+                  success: false,
+                  error: "Server timeout - processing took too long",
+                }))
+
+                allResults.push(...errorResults)
+                continue
+              } else {
+                throw new Error(`Server responded with ${response.status}: ${errorText}`)
+              }
+            }
+
+            const data = await response.json()
+            console.log(`Batch ${Math.floor(i / BATCH_SIZE) + 1} response:`, data)
+
+            // Convert API results to our format
+            const processedResults: ProcessingResult[] = data.results.map((result: any) => {
+              if (result.success) {
+                // Create a product object from the API response
+                const product: Product = {
+                  name: result.data.name,
+                  barcode: result.barcode,
+                  image: result.data.image,
+                  price: result.data.price || "",
+                  stock: 0, // Default stock
+                  min_stock: 0, // Default min stock
+                  data_source: result.data.source,
+                }
+
+                return {
+                  barcode: result.barcode,
+                  success: true,
+                  product,
+                  selected: true, // Default to selected
+                }
+              } else {
+                return {
+                  barcode: result.barcode,
+                  success: false,
+                  error: result.error || "Product not found",
+                }
+              }
+            })
+
+            allResults.push(...processedResults)
+
+            // Update processed count
+            setProcessedCount(Math.min(i + BATCH_SIZE, barcodes.length))
+
+            // Add a small delay between batches to avoid overloading the server
+            if (i + BATCH_SIZE < barcodes.length) {
+              await new Promise((resolve) => setTimeout(resolve, 1000))
+            }
+          } catch (error) {
+            console.error(`Error processing batch ${Math.floor(i / BATCH_SIZE) + 1}:`, error)
+
+            // Add error results for this batch
+            const errorResults: ProcessingResult[] = batchBarcodes.map((barcode) => ({
+              barcode,
+              success: false,
+              error: error instanceof Error ? error.message : "Unknown error occurred",
+            }))
+
+            allResults.push(...errorResults)
           }
         }
-      })
 
-      console.log("Processed results:", processedResults)
-      setResults(processedResults)
-      setProgress(100)
+        console.log("All batches processed, total results:", allResults.length)
+        setResults(allResults)
+        setProcessedCount(barcodes.length)
 
-      if (onProcessComplete) {
-        onProcessComplete(processedResults)
+        if (onProcessComplete) {
+          onProcessComplete(allResults)
+        }
+      } finally {
+        // Clear the interval and set progress to 100% when done
+        clearInterval(progressInterval)
+        setProgress(100)
       }
     } catch (error) {
       console.error("Error processing barcodes:", error)
@@ -181,6 +259,9 @@ export function BatchBarcodeProcessor({ onProcessComplete }: BatchProcessorProps
     }
 
     setIsSaving(true)
+    setProgress(0)
+    setProcessedCount(0)
+    setTotalBarcodes(selectedResults.length)
 
     try {
       let savedCount = 0
@@ -188,7 +269,9 @@ export function BatchBarcodeProcessor({ onProcessComplete }: BatchProcessorProps
       let newProductsCount = 0
       let updatedProductsCount = 0
 
-      for (const result of selectedResults) {
+      for (let i = 0; i < selectedResults.length; i++) {
+        const result = selectedResults[i]
+
         if (result.product) {
           try {
             console.log(`Processing product: ${result.barcode}`, result.product)
@@ -262,6 +345,9 @@ export function BatchBarcodeProcessor({ onProcessComplete }: BatchProcessorProps
             errorCount++
           }
         }
+
+        // Update progress after each product
+        setProcessedCount(i + 1)
       }
 
       toast({
@@ -277,6 +363,7 @@ export function BatchBarcodeProcessor({ onProcessComplete }: BatchProcessorProps
       })
     } finally {
       setIsSaving(false)
+      setProgress(100) // Ensure progress is complete
     }
   }
 
@@ -334,13 +421,16 @@ export function BatchBarcodeProcessor({ onProcessComplete }: BatchProcessorProps
           </div>
         </div>
 
-        {isProcessing && (
+        {(isProcessing || isSaving) && (
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-sm">Processing barcodes...</span>
+              <span className="text-sm">{isProcessing ? "Processing barcodes..." : "Saving products..."}</span>
               <span className="text-sm font-medium">{progress}%</span>
             </div>
             <Progress value={progress} className="h-2" />
+            <div className="text-center text-sm text-muted-foreground">
+              {processedCount} of {totalBarcodes} {isProcessing ? "processed" : "saved"}
+            </div>
           </div>
         )}
 
